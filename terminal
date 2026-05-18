@@ -1,0 +1,4 @@
+brew update 
+brew install node
+brew install npm
+npm run dev

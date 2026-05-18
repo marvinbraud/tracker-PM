@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript incremental build
+*.tsbuildinfo
+node_modules/typescript/tsbuildinfo
+
+# Editor
+.vscode/
+.idea/
+
+# Netlify (migrated to Render)
+.netlify/
