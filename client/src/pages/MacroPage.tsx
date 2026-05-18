@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -66,52 +66,116 @@ function SectionBar({ icon, title }: { icon?: React.ReactNode; title: string }) 
   );
 }
 
-// ─── 1. INDICES MONDIAUX ──────────────────────────────────────────────────────
+// ─── 1. INDICES MONDIAUX — live via Yahoo Finance ────────────────────────────
 
-const INDICES = [
-  { name: "S&P 500",     ticker: "SPX",  value: "5 783", chg: +0.42, ytd: -2.8,   region: "🇺🇸", sub: "US Large Cap"       },
-  { name: "NASDAQ 100",  ticker: "NDX",  value: "20 142",chg: +0.51, ytd: -5.8,   region: "🇺🇸", sub: "US Tech"            },
-  { name: "CAC 40",      ticker: "CAC",  value: "8 124", chg: +0.18, ytd: +9.4,   region: "🇫🇷", sub: "France"             },
-  { name: "DAX 40",      ticker: "DAX",  value: "23 518",chg: +0.29, ytd: +14.8,  region: "🇩🇪", sub: "Germany"            },
-  { name: "Nikkei 225",  ticker: "NI225",value: "36 241",chg: -0.38, ytd: -8.9,   region: "🇯🇵", sub: "Japan"              },
-  { name: "MSCI World",  ticker: "MXWO", value: "3 512", chg: +0.21, ytd: -0.8,   region: "🌍", sub: "Developed Mkts"    },
-  { name: "MSCI EM",     ticker: "MXEF", value: "1 124", chg: +0.68, ytd: +5.8,   region: "🌏", sub: "Emerging Mkts"     },
-  { name: "Euro Stoxx",  ticker: "SX5E", value: "5 494", chg: +0.12, ytd: +11.6,  region: "🇪🇺", sub: "Eurozone"          },
-  { name: "Hang Seng",   ticker: "HSI",  value: "24 312",chg: +1.12, ytd: +21.4,  region: "🇭🇰", sub: "Hong Kong"          },
-  { name: "FTSE 100",    ticker: "UKX",  value: "8 748", chg: -0.21, ytd: +7.1,   region: "🇬🇧", sub: "UK"                },
-];
-
-// ── Chart en % de performance (plus base 100) ──
-const INDEX_SERIES = [
-  { key: "SPX",   label: "S&P 500",    color: "#ef4444" },
-  { key: "NDX",   label: "NASDAQ 100", color: "#3b82f6" },
-  { key: "CAC",   label: "CAC 40",     color: "#60a5fa" },
-  { key: "DAX",   label: "DAX 40",     color: "#eab308" },
-  { key: "NI225", label: "Nikkei 225", color: "#ec4899" },
-  { key: "MXWO",  label: "MSCI World", color: "#22d3ee" },
-  { key: "MXEF",  label: "MSCI EM",    color: "#f97316" },
-  { key: "HSI",   label: "Hang Seng",  color: "#22c55e" },
+const LIVE_INDICES = [
+  { key: "SPX",   ticker: "^GSPC",   label: "S&P 500",    color: "#ef4444", region: "🇺🇸", name: "S&P 500",    sub: "US Large Cap"  },
+  { key: "NDX",   ticker: "^NDX",    label: "NASDAQ 100", color: "#3b82f6", region: "🇺🇸", name: "NASDAQ 100", sub: "US Tech"        },
+  { key: "CAC",   ticker: "^FCHI",   label: "CAC 40",     color: "#60a5fa", region: "🇫🇷", name: "CAC 40",     sub: "France"         },
+  { key: "DAX",   ticker: "^GDAXI",  label: "DAX 40",     color: "#eab308", region: "🇩🇪", name: "DAX 40",     sub: "Germany"        },
+  { key: "NI225", ticker: "^N225",   label: "Nikkei 225", color: "#ec4899", region: "🇯🇵", name: "Nikkei 225", sub: "Japan"          },
+  { key: "MXWO",  ticker: "IWDA.AS", label: "MSCI World", color: "#22d3ee", region: "🌍",  name: "MSCI World", sub: "Dev. Mkts"      },
+  { key: "MXEF",  ticker: "EEM",     label: "MSCI EM",    color: "#f97316", region: "🌏",  name: "MSCI EM",    sub: "Emerging Mkts"  },
+  { key: "HSI",   ticker: "^HSI",    label: "Hang Seng",  color: "#22c55e", region: "🇭🇰", name: "Hang Seng",  sub: "Hong Kong"      },
 ] as const;
-type SeriesKey = typeof INDEX_SERIES[number]["key"];
 
-// Données en % de variation depuis le 1er jan 2026 (YTD) — mis à jour 17 mai 2026
-const INDEX_PERF_DATA = [
-  { d: "01/01", SPX:   0,    NDX:   0,    CAC:  0,    DAX:  0,    NI225:  0,    MXWO:  0,    MXEF:  0,    HSI:   0    },
-  { d: "15/01", SPX:  -1.8,  NDX:  -2.6,  CAC:  1.8,  DAX:  2.3,  NI225: -2.9,  MXWO: -0.9,  MXEF:  0.8,  HSI:   4.2  },
-  { d: "01/02", SPX:  -3.2,  NDX:  -4.8,  CAC:  3.1,  DAX:  4.8,  NI225: -4.4,  MXWO: -2.2,  MXEF:  1.4,  HSI:   7.1  },
-  { d: "15/02", SPX:  -4.9,  NDX:  -6.9,  CAC:  4.8,  DAX:  6.4,  NI225: -5.8,  MXWO: -3.5,  MXEF:  2.3,  HSI:  10.8  },
-  { d: "01/03", SPX:  -6.6,  NDX:  -9.2,  CAC:  5.9,  DAX:  9.1,  NI225: -6.2,  MXWO: -4.7,  MXEF:  3.1,  HSI:  14.6  },
-  { d: "08/03", SPX:  -8.2,  NDX: -11.1,  CAC:  6.2,  DAX: 10.8,  NI225: -6.9,  MXWO: -5.0,  MXEF:  2.8,  HSI:  16.2  },
-  { d: "16/03", SPX:  -8.12, NDX: -12.43, CAC:  6.82, DAX: 11.74, NI225: -6.64, MXWO: -4.28, MXEF:  3.62, HSI:  18.36 },
-  { d: "01/04", SPX:  -6.2,  NDX: -10.1,  CAC:  7.9,  DAX: 13.2,  NI225: -7.8,  MXWO: -3.1,  MXEF:  4.8,  HSI:  19.8  },
-  { d: "15/04", SPX:  -4.8,  NDX:  -8.1,  CAC:  8.6,  DAX: 14.1,  NI225: -8.4,  MXWO: -2.0,  MXEF:  5.2,  HSI:  20.8  },
-  { d: "01/05", SPX:  -3.5,  NDX:  -6.4,  CAC:  9.1,  DAX: 14.6,  NI225: -8.9,  MXWO: -1.2,  MXEF:  5.6,  HSI:  21.2  },
-  { d: "17/05", SPX:  -2.8,  NDX:  -5.8,  CAC:  9.4,  DAX: 14.8,  NI225: -8.9,  MXWO: -0.8,  MXEF:  5.8,  HSI:  21.4  },
-];
+type SeriesKey = typeof LIVE_INDICES[number]["key"];
+
+interface LiveQuote { price: number; dayChange: number; ytd: number }
+interface SeriesHistory { dates: string[]; closes: number[] }
+
+async function _fetchYtd(ticker: string): Promise<SeriesHistory | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=ytd&interval=1wk&includePrePost=false`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ECI/2.0)", "Accept": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const result = json?.chart?.result?.[0];
+    if (!result) return null;
+    const timestamps: number[] = result.timestamp ?? [];
+    const rawCloses: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
+    const dates: string[] = [];
+    const closes: number[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const c = rawCloses[i];
+      if (c == null || isNaN(c)) continue;
+      const d = new Date(timestamps[i] * 1000);
+      dates.push(`${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`);
+      closes.push(c);
+    }
+    return dates.length > 0 ? { dates, closes } : null;
+  } catch { return null; }
+}
+
+function _buildChartData(all: Partial<Record<SeriesKey, SeriesHistory | null>>): Record<string, number | string>[] {
+  // Find the series with the most data points → master date axis
+  const sorted = Object.entries(all)
+    .filter(([,s]) => s != null)
+    .sort(([,a],[,b]) => (b?.dates.length ?? 0) - (a?.dates.length ?? 0));
+  if (!sorted.length) return [];
+  const [masterKey, masterSeries] = sorted[0] as [SeriesKey, SeriesHistory];
+
+  return masterSeries.dates.map((d, i) => {
+    const point: Record<string, number | string> = { d };
+    for (const { key } of LIVE_INDICES) {
+      const s = all[key];
+      if (!s || s.closes.length < 1) continue;
+      const firstClose = s.closes[0];
+      // Match by exact date label or fall back to positional index
+      const idx = s.dates.indexOf(d);
+      const close = idx >= 0 ? s.closes[idx] : s.closes[Math.min(i, s.closes.length - 1)];
+      point[key] = parseFloat(((close / firstClose - 1) * 100).toFixed(2));
+    }
+    return point;
+  });
+}
+
+function useIndexHistory() {
+  const today = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+  const [state, setState] = useState<{
+    chartData: Record<string, number | string>[];
+    quotes: Partial<Record<SeriesKey, LiveQuote>>;
+    loading: boolean;
+    updatedAt: string;
+  }>({ chartData: [], quotes: {}, loading: true, updatedAt: today });
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const all: Partial<Record<SeriesKey, SeriesHistory | null>> = {};
+      const quotes: Partial<Record<SeriesKey, LiveQuote>> = {};
+      await Promise.allSettled(
+        LIVE_INDICES.map(async ({ key, ticker }) => {
+          const s = await _fetchYtd(ticker);
+          all[key] = s;
+          if (s && s.closes.length >= 2) {
+            const first = s.closes[0], last = s.closes[s.closes.length - 1];
+            const prev  = s.closes[s.closes.length - 2];
+            quotes[key] = {
+              price:     last,
+              dayChange: prev > 0 ? ((last - prev) / prev) * 100 : 0,
+              ytd:       parseFloat(((last / first - 1) * 100).toFixed(2)),
+            };
+          }
+        })
+      );
+      if (!alive) return;
+      setState({ chartData: _buildChartData(all), quotes, loading: false, updatedAt: today });
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return state;
+}
 
 function IndicesSection() {
+  const { chartData, quotes, loading, updatedAt } = useIndexHistory();
   const [visible, setVisible] = useState<Set<SeriesKey>>(
-    () => new Set(INDEX_SERIES.map(s => s.key))
+    () => new Set(LIVE_INDICES.map(s => s.key))
   );
 
   function toggle(key: SeriesKey) {
@@ -122,37 +186,59 @@ function IndicesSection() {
     });
   }
 
+  // Dynamic Y domain from chart data
+  const allVals = chartData.flatMap(pt =>
+    LIVE_INDICES.filter(idx => visible.has(idx.key)).map(idx => pt[idx.key] as number).filter(v => typeof v === "number")
+  );
+  const yMin = allVals.length ? Math.floor(Math.min(...allVals) / 5) * 5 - 5 : -20;
+  const yMax = allVals.length ? Math.ceil(Math.max(...allVals) / 5) * 5 + 5 : 30;
+
   return (
     <div>
       <SectionBar icon={<Globe size={12} />} title="GLOBAL INDICES" />
+
+      {/* Index cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "6px", marginBottom: "12px" }}>
-        {INDICES.map(idx => (
-          <div key={idx.ticker} style={{ ...s.card, display: "flex", flexDirection: "column", gap: "2px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ fontSize: "10px", color: "var(--primary)", fontWeight: 700, letterSpacing: "0.06em" }}>{idx.ticker}</span>
-              <span style={{ fontSize: "10px" }}>{idx.region}</span>
+        {LIVE_INDICES.map(idx => {
+          const q = quotes[idx.key];
+          const priceStr = q ? q.price.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) : "—";
+          const ytd   = q?.ytd ?? null;
+          const chg   = q?.dayChange ?? null;
+          return (
+            <div key={idx.key} style={{ ...s.card, display: "flex", flexDirection: "column", gap: "2px", opacity: loading && !q ? 0.5 : 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: "10px", color: idx.color, fontWeight: 700, letterSpacing: "0.06em" }}>{idx.key}</span>
+                <span style={{ fontSize: "10px" }}>{idx.region}</span>
+              </div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{priceStr}</div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                {chg !== null && (
+                  <span style={{ fontSize: "10px", color: chg >= 0 ? "var(--positive)" : "var(--negative)", display: "flex", alignItems: "center", gap: "2px" }}>
+                    {chg >= 0 ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
+                    {chg > 0 ? "+" : ""}{chg.toFixed(2)}%
+                  </span>
+                )}
+                {ytd !== null && (
+                  <span style={{ fontSize: "9px", color: ytd >= 0 ? "var(--positive)" : "var(--negative)" }}>
+                    YTD {ytd > 0 ? "+" : ""}{ytd.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "9px", color: "var(--text-faint)" }}>{idx.name}</div>
             </div>
-            <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{idx.value}</div>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <span style={{ fontSize: "10px", color: idx.chg >= 0 ? "var(--positive)" : "var(--negative)", display: "flex", alignItems: "center", gap: "2px" }}>
-                {idx.chg >= 0 ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
-                {idx.chg > 0 ? "+" : ""}{idx.chg.toFixed(2)}%
-              </span>
-              <span style={{ fontSize: "9px", color: idx.ytd >= 0 ? "var(--positive)" : "var(--negative)" }}>
-                YTD {idx.ytd > 0 ? "+" : ""}{idx.ytd.toFixed(2)}%
-              </span>
-            </div>
-            <div style={{ fontSize: "9px", color: "var(--text-faint)" }}>{idx.name}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Graphique en % */}
+      {/* Chart */}
       <div style={s.card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
-          <div style={{ ...s.label }}>COMPARATIVE PERFORMANCE 2026 YTD (%) — BASE 0 ON 1/01/2026 · UPDATED 17/05</div>
+          <div style={{ ...s.label }}>
+            COMPARATIVE PERFORMANCE 2026 YTD (%) — BASE 0 ON 1/01/2026 · UPDATED {updatedAt}
+            {loading && <span style={{ marginLeft: "6px", color: "var(--accent)" }}>⟳ Loading…</span>}
+          </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-            {INDEX_SERIES.map(({ key, label, color }) => {
+            {LIVE_INDICES.map(({ key, label, color }) => {
               const on = visible.has(key);
               return (
                 <button key={key} onClick={() => toggle(key)} style={{
@@ -169,11 +255,11 @@ function IndicesSection() {
           </div>
         </div>
         <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={INDEX_PERF_DATA} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
+          <LineChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" />
-            <XAxis dataKey="d" tick={{ fontSize: 9, fill: "var(--text-faint)" }} />
+            <XAxis dataKey="d" tick={{ fontSize: 9, fill: "var(--text-faint)" }} interval="preserveStartEnd" />
             <YAxis
-              domain={[-16, 26]}
+              domain={[yMin, yMax]}
               tick={{ fontSize: 9, fill: "var(--text-faint)" }}
               tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`}
             />
@@ -182,7 +268,7 @@ function IndicesSection() {
               contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", fontSize: "10px", borderRadius: "8px" }}
               formatter={(v: any, name: any) => [`${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}%`, name]}
             />
-            {INDEX_SERIES.map(({ key, label, color }) =>
+            {LIVE_INDICES.map(({ key, label, color }) =>
               visible.has(key) ? (
                 <Line key={key} type="monotone" dataKey={key} stroke={color} strokeWidth={2}
                   dot={false} name={label} activeDot={{ r: 4, fill: color }} />
@@ -191,7 +277,7 @@ function IndicesSection() {
           </LineChart>
         </ResponsiveContainer>
         <div style={{ fontSize: "9px", color: "var(--text-faint)", marginTop: "4px" }}>
-          % change since Jan 1st 2026 · Click on an index to show/hide
+          Live data via Yahoo Finance · % change since Jan 1st 2026 · Click on an index to show/hide
         </div>
       </div>
     </div>
