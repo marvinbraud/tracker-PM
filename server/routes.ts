@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import yahooFinance from "yahoo-finance2";
 import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
 import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchLiveMacroData, fetchBigMacIndex } from "./marketData";
@@ -9,6 +10,13 @@ import {
   maxDrawdown, beta, trackingError, informationRatio, calmarRatio,
   historicalVaR, expectedShortfall, correlationMatrix, skewness, excessKurtosis,
 } from "./calculations";
+
+// ─── Yahoo Finance in-memory cache ───────────────────────────────────────────
+const QUOTE_CACHE_TTL = 60_000; // 60 seconds
+const quoteCache = new Map<string, { data: any; ts: number }>();
+
+// Suppress yahoo-finance2 survey notice
+yahooFinance.setGlobalConfig({ suppress: ["yahooSurvey"] } as any);
 
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
@@ -426,50 +434,68 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
-  /** GET /api/quote?symbols=AAPL,MC.PA — Yahoo Finance live price proxy */
+  /** GET /api/quote?symbols=AAPL,MC.PA — Yahoo Finance live price proxy via yahoo-finance2 */
   app.get("/api/quote", async (req, res) => {
-    const symbols = req.query.symbols as string | undefined;
-    if (!symbols) {
+    const symbolsParam = req.query.symbols as string | undefined;
+    if (!symbolsParam) {
       return res.status(400).json({ error: "Missing ?symbols= query parameter" });
     }
 
-    const fields = [
-      "regularMarketPrice",
-      "regularMarketChangePercent",
-      "regularMarketPreviousClose",
-      "currency",
-      "shortName",
-      "marketState",
-    ].join(",");
+    const requested = symbolsParam.split(",").map(s => s.trim()).filter(Boolean);
+    if (requested.length === 0) {
+      return res.status(400).json({ error: "No valid symbols" });
+    }
 
-    const headers = {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-      Accept: "application/json, text/plain, */*",
-      "Accept-Language": "en-US,en;q=0.9",
-      Origin: "https://finance.yahoo.com",
-      Referer: "https://finance.yahoo.com/",
-    };
+    const now    = Date.now();
+    const result: any[] = [];
+    const toFetch: string[] = [];
 
-    const mirrors = [
-      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}&fields=${fields}`,
-      `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}&fields=${fields}`,
-    ];
-
-    for (const url of mirrors) {
-      try {
-        const upstream = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
-        if (!upstream.ok) continue;
-        const data = await upstream.json();
-        res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-        return res.json(data);
-      } catch (err) {
-        console.warn("[quote] mirror failed:", url, (err as Error)?.message);
+    // Serve from cache when possible
+    for (const sym of requested) {
+      const hit = quoteCache.get(sym);
+      if (hit && now - hit.ts < QUOTE_CACHE_TTL) {
+        result.push(hit.data);
+      } else {
+        toFetch.push(sym);
       }
     }
 
-    return res.status(502).json({ error: "Yahoo Finance unreachable — try again later" });
+    // Fetch uncached symbols
+    if (toFetch.length > 0) {
+      try {
+        const raw = await yahooFinance.quote(toFetch, {
+          fields: [
+            "regularMarketPrice", "regularMarketChangePercent",
+            "regularMarketPreviousClose", "currency", "shortName", "marketState",
+          ],
+        });
+        const quotes = Array.isArray(raw) ? raw : [raw];
+        for (const q of quotes) {
+          if (q && q.regularMarketPrice != null) {
+            const item = {
+              symbol:                       q.symbol,
+              regularMarketPrice:           q.regularMarketPrice,
+              regularMarketChangePercent:   q.regularMarketChangePercent   ?? 0,
+              regularMarketPreviousClose:   q.regularMarketPreviousClose   ?? q.regularMarketPrice,
+              currency:                     q.currency                     ?? "USD",
+              shortName:                    q.shortName                    ?? undefined,
+              marketState:                  q.marketState                  ?? undefined,
+            };
+            quoteCache.set(q.symbol, { data: item, ts: now });
+            result.push(item);
+          }
+        }
+      } catch (err) {
+        console.warn("[quote] yahoo-finance2 error:", (err as Error)?.message);
+        // Return partial result (cached hits) rather than a hard error
+        if (result.length === 0) {
+          return res.status(502).json({ error: "Yahoo Finance unreachable — try again later" });
+        }
+      }
+    }
+
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return res.json({ quoteResponse: { result, error: null } });
   });
 }
 
