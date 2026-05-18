@@ -27,7 +27,7 @@ function RatingBar({ label, value, max, color }: { label: string; value: number;
         <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: "3px", transition: "width 0.5s ease" }} />
       </div>
       <div className="tabnum" style={{ fontSize: "10px", color: "var(--bb-text)", width: "50px", textAlign: "right" }}>
-        {typeof value === "number" && !isNaN(value) ? value.toFixed(3) : "—"}
+        {typeof value === "number" && !isNaN(value) ? `${value.toFixed(1)}%` : "—"}
       </div>
     </div>
   );

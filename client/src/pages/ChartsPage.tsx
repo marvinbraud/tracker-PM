@@ -47,14 +47,21 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
   // Portfolio by sector
   const topSectors = allocationBySector.slice(0, 8);
 
-  // Rolling volatility approximation (30d std dev of daily returns)
-  const rollingVol: { date: string; vol: number }[] = [];
+  // Rolling volatility — portfolio AND benchmark (30d annualised)
+  const rollingVol: { date: string; vol: number; bench: number }[] = [];
   for (let i = 30; i < portfolioHistory.length; i++) {
     const slice = portfolioHistory.slice(i - 30, i);
-    const returns = slice.slice(1).map((h, j) => (h.value - slice[j].value) / slice[j].value);
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const stdDev = Math.sqrt(returns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / returns.length);
-    rollingVol.push({ date: fmtDate(portfolioHistory[i].date), vol: +(stdDev * Math.sqrt(252) * 100).toFixed(2) });
+    const portRet  = slice.slice(1).map((h, j) => (h.value     - slice[j].value)     / (slice[j].value     || 1));
+    const benchRet = slice.slice(1).map((h, j) => (h.benchmark - slice[j].benchmark) / (slice[j].benchmark || 1));
+    const stdDev = (arr: number[]) => {
+      const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return Math.sqrt(arr.reduce((acc, r) => acc + Math.pow(r - m, 2), 0) / arr.length);
+    };
+    rollingVol.push({
+      date:  fmtDate(portfolioHistory[i].date),
+      vol:   +(stdDev(portRet)  * Math.sqrt(252) * 100).toFixed(2),
+      bench: +(stdDev(benchRet) * Math.sqrt(252) * 100).toFixed(2),
+    });
   }
 
   // Drawdown series
@@ -137,30 +144,32 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
         </div>
       </div>
 
-      {/* Volatility + Allocations */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+      {/* Volatility + Allocations — equal-height row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", alignItems: "start" }}>
         {/* Rolling vol */}
-        <div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <SectionBar title="⚡ Volatilité glissante 30j (%)" />
-          <div className="bb-card">
-            <ResponsiveContainer width="100%" height={150}>
-              <LineChart data={rollingVol} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+          <div className="bb-card" style={{ flex: 1 }}>
+            <ResponsiveContainer width="100%" height={Math.max(160, topSectors.length * 26)}>
+              <LineChart data={rollingVol} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--bb-border)" opacity={0.4} />
                 <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--bb-text-muted)" }} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 9, fill: "var(--bb-text-muted)" }} tickLine={false} axisLine={false}
                   tickFormatter={v => `${v}%`} width={30} />
                 <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px" }}
-                  formatter={(v: number) => [`${v.toFixed(1)}%`]} />
-                <Line type="monotone" dataKey="vol" stroke="var(--bb-cyan)" dot={false} strokeWidth={1.5} name="Volatilité annualisée" />
+                  formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n]} />
+                <Legend iconSize={8} wrapperStyle={{ fontSize: "9px" }} />
+                <Line type="monotone" dataKey="vol"   stroke="var(--bb-cyan)"  dot={false} strokeWidth={1.5} name="Portefeuille" />
+                <Line type="monotone" dataKey="bench" stroke="var(--bb-amber)" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name={benchmark} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Sector allocation */}
-        <div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <SectionBar title="Secteurs" />
-          <div className="bb-card">
+          <div className="bb-card" style={{ flex: 1 }}>
             <ResponsiveContainer width="100%" height={Math.max(160, topSectors.length * 26)}>
               <BarChart data={topSectors} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
                 barCategoryGap="20%">
@@ -182,10 +191,10 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
         </div>
 
         {/* Asset class donut */}
-        <div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <SectionBar title="Classes d'actifs" />
-          <div className="bb-card" style={{ height: "150px" }}>
-            <ResponsiveContainer width="100%" height={140}>
+          <div className="bb-card" style={{ flex: 1 }}>
+            <ResponsiveContainer width="100%" height={Math.max(160, topSectors.length * 26)}>
               <PieChart>
                 <Pie data={allocationByClass} dataKey="pct" nameKey="name" cx="50%" cy="50%"
                   innerRadius={30} outerRadius={55}

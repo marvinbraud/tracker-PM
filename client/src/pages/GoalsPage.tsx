@@ -570,7 +570,7 @@ export default function GoalsPage({ portfolio }: Props) {
             No holdings found — import positions first.
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: "420px", overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
@@ -769,6 +769,7 @@ const thStyle: React.CSSProperties = {
   padding: "7px 12px", textAlign: "left", fontSize: "10px",
   color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".05em",
   fontWeight: 600, whiteSpace: "nowrap",
+  position: "sticky", top: 0, background: "var(--surface)", zIndex: 1,
 };
 const tdStyle: React.CSSProperties = {
   padding: "8px 12px", color: "var(--text)", verticalAlign: "middle",

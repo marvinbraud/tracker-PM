@@ -345,8 +345,10 @@ export function computeSummary(
 
   // Build positions
   const positions: Position[] = holdings.map(h => {
-    const marketValue = toEur(h.quantity * h.currentPrice, h.currency);
-    const costBasis   = toEur(h.quantity * h.costPrice, h.currency);
+    const isCash      = h.assetClass?.toLowerCase() === "cash" || h.ticker.toLowerCase().startsWith("cash");
+    const unitPrice   = isCash ? 1.0 : h.currentPrice;  // cash: 1 unit = 1 currency unit always
+    const marketValue = toEur(h.quantity * unitPrice, h.currency);
+    const costBasis   = toEur(h.quantity * (isCash ? 1.0 : h.costPrice), h.currency);
     const pnlAmount   = marketValue - costBasis;
     const pnlPct      = costBasis > 0 ? (pnlAmount / costBasis) * 100 : 0;
 
@@ -363,7 +365,7 @@ export function computeSummary(
       currency: h.currency,
       priceCurrency: h.currency,
       isin: h.isin,
-      currentPrice: h.currentPrice,
+      currentPrice: isCash ? 1.0 : h.currentPrice,
       marketValue,
       costBasis,
       pnlAmount,
@@ -751,8 +753,13 @@ export async function refreshLivePrices(): Promise<{
   const { fetchLivePrices } = await import("./marketData");
   const data = load();
 
-  // Deduplicate tickers across all holdings
-  const tickers = Array.from(new Set(data.holdings.map(h => h.ticker)));
+  // Deduplicate tickers — skip cash (price is always 1.0, no Yahoo needed)
+  const isCashTicker = (h: { ticker: string; assetClass?: string }) =>
+    (h.assetClass ?? "").toLowerCase() === "cash" || h.ticker.toLowerCase().startsWith("cash");
+
+  const tickers = Array.from(new Set(
+    data.holdings.filter(h => !isCashTicker(h)).map(h => h.ticker)
+  ));
   if (!tickers.length) return { updated: 0, failed: [] };
 
   const quotes = await fetchLivePrices(tickers);
@@ -762,6 +769,10 @@ export async function refreshLivePrices(): Promise<{
   const failedSet = new Set<string>();
 
   data.holdings = data.holdings.map(h => {
+    // Cash: keep price fixed at 1.0, never overwrite with Yahoo data
+    if (isCashTicker(h)) {
+      return { ...h, currentPrice: 1.0, dayChange: 0, lastLiveUpdate: now };
+    }
     const q = quotes[h.ticker];
     if (q && q.price > 0) {
       updated++;
