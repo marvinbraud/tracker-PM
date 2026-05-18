@@ -161,14 +161,16 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
         <div>
           <SectionBar title="Secteurs" />
           <div className="bb-card">
-            <ResponsiveContainer width="100%" height={150}>
-              <BarChart data={topSectors} layout="vertical" margin={{ left: 4, right: 8, top: 2, bottom: 2 }}>
+            <ResponsiveContainer width="100%" height={Math.max(160, topSectors.length * 26)}>
+              <BarChart data={topSectors} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
+                barCategoryGap="20%">
                 <XAxis type="number" tick={{ fontSize: 9, fill: "var(--bb-text-muted)" }} tickLine={false} axisLine={false}
                   tickFormatter={v => `${v.toFixed(0)}%`} domain={[0, 100]} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "var(--bb-text-muted)" }} width={70} tickLine={false} axisLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "var(--bb-text-muted)" }}
+                  width={90} tickLine={false} axisLine={false}
+                  tickFormatter={(v: string) => v.length > 14 ? v.slice(0, 13) + "…" : v} />
                 <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px" }}
                   formatter={(v: number) => [`${v.toFixed(1)}%`, "Poids"]} />
-                {topSectors.map((_, i) => null)}
                 <Bar dataKey="pct" radius={[0, 2, 2, 0]}>
                   {topSectors.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />

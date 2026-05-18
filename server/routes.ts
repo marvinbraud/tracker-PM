@@ -216,7 +216,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
           const currentPrice  = 1.0;
           const marketValue   = h.quantity * fxRate;           // convert to EUR for totals
           const costBasis     = h.quantity * fxRate;           // P&L = 0 for cash
-          const flatHistory   = await generateHistory(h.ticker, h.quantity, 365); // flat line
+          // Flat history at 1.0/unit — don't call generateHistory (avoids Yahoo fetch for cash)
+          const flatHistory = buildCashHistory(365);
           return {
             id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
             assetClass: h.assetClass, sector: h.sector, geography: h.geography,
@@ -527,6 +528,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Flat history at price=1.0 for cash positions (price never changes) */
+function buildCashHistory(days: number): { date: string; close: number }[] {
+  const result: { date: string; close: number }[] = [];
+  const end = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(end);
+    d.setDate(d.getDate() - i);
+    if (d.getDay() !== 0 && d.getDay() !== 6) {
+      result.push({ date: d.toISOString().split("T")[0], close: 1.0 });
+    }
+  }
+  return result;
+}
 
 /**
  * Ensure a sub-account name is fully qualified with the root portfolio name.
