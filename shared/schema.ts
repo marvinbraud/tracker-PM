@@ -17,7 +17,7 @@ export const holdings = pgTable("holdings", {
   isin: text("isin").default(""),
 });
 
-export const insertHoldingSchema = createInsertSchema(holdings).omit({ id: true }).extend({
+export const insertHoldingSchema = createInsertSchema(holdings).omit({ id: true as const }).extend({
   sector:    z.string().optional().default("—"),
   geography: z.string().optional().default("—"),
   isin:      z.string().optional().default(""),

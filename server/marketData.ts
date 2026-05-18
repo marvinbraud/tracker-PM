@@ -1,4 +1,3 @@
-import yahooFinance from 'yahoo-finance2';
 import Papa from 'papaparse';
 
 /**
@@ -104,24 +103,30 @@ export async function getMockPrice(ticker: string): Promise<TickerData> {
 // ─── History fetch ────────────────────────────────────────────────────────────
 async function fetchYahooHistory(ticker: string, days: number): Promise<{ date: string; close: number }[] | null> {
   try {
-    const start = new Date();
-    start.setDate(start.getDate() - days - 5); // Add buffer for weekends
-    
-    // yahoo-finance2 historical query
-    const results = await yahooFinance.historical(ticker, {
-      period1: start,
-      interval: '1d'
+    // Use Yahoo Finance v8 chart endpoint — no external library, works from cloud IPs
+    const range  = days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo" : "1y";
+    const url    = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+                   `?range=${range}&interval=1d&includePrePost=false`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ECI-Dashboard/2.0)", "Accept": "application/json" },
+      signal: AbortSignal.timeout(8_000),
     });
-    
-    if (!results || results.length === 0) return null;
-    
-    return results.map(r => {
-      const dateStr = r.date instanceof Date ? r.date.toISOString() : String(r.date);
-      return {
-        date: dateStr.split('T')[0],
-        close: +(r.close ?? 0).toFixed(4)
-      };
-    }).filter(r => r.close > 0);
+    if (!res.ok) return null;
+
+    const data      = await res.json() as any;
+    const result    = data?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp ?? [];
+    const closes: number[]     = result?.indicators?.quote?.[0]?.close ?? [];
+
+    if (timestamps.length === 0) return null;
+
+    return timestamps
+      .map((ts, i) => ({
+        date:  new Date(ts * 1000).toISOString().split("T")[0],
+        close: +(closes[i] ?? 0).toFixed(4),
+      }))
+      .filter(r => r.close > 0);
   } catch (err) {
     console.warn(`[yahoo] failed to fetch history for ${ticker}:`, err);
     return null;
