@@ -185,6 +185,12 @@ export function addHolding(h: InsertHoldingLocal): StoredHolding {
   return holding;
 }
 
+export function deleteHolding(id: number): void {
+  const data = load();
+  data.holdings = data.holdings.filter(h => h.id !== id);
+  save(data);
+}
+
 export function replacePortfolioHoldings(
   portfolio: string,
   holdings: InsertHoldingLocal[]
