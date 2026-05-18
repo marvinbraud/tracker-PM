@@ -1,5 +1,4 @@
-import { pgTable, text, real, integer, timestamp } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
+import { pgTable, text, real, integer } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 // Holdings table — each position in the portfolio
@@ -17,11 +16,18 @@ export const holdings = pgTable("holdings", {
   isin: text("isin").default(""),
 });
 
-export const insertHoldingSchema = createInsertSchema(holdings).omit({ id: true as const }).extend({
-  sector:    z.string().optional().default("—"),
-  geography: z.string().optional().default("—"),
-  isin:      z.string().optional().default(""),
-  currency:  z.string().optional().default("EUR"),
+// Defined manually to avoid drizzle-zod .omit() type incompatibility
+export const insertHoldingSchema = z.object({
+  portfolio:  z.string().default("Global"),
+  ticker:     z.string(),
+  name:       z.string(),
+  assetClass: z.string().default("Action"),
+  sector:     z.string().optional().default("—"),
+  geography:  z.string().optional().default("—"),
+  quantity:   z.number(),
+  costPrice:  z.number(),
+  currency:   z.string().optional().default("EUR"),
+  isin:       z.string().optional().default(""),
 });
 export type InsertHolding = z.infer<typeof insertHoldingSchema>;
 export type Holding = typeof holdings.$inferSelect;
