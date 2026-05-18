@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { PortfolioSummary, Position } from "@shared/schema";
 import { fmt, fmtPct, colorClass, assetBadgeClass } from "../lib/utils";
 import { TrendingUp, TrendingDown, Minus, Trash2 } from "lucide-react";
-import { apiRequest, queryClient } from "../lib/queryClient";
+import { queryClient } from "../lib/queryClient";
+import { deleteHolding } from "../lib/localStore";
 import { useToast } from "../hooks/use-toast";
 
 interface Props { portfolio: string; period: string; benchmark: string; }
@@ -15,8 +16,10 @@ function Badge({ cls }: { cls: string }) {
 }
 
 export default function PositionsPage({ portfolio, period, benchmark }: Props) {
+  const [refreshTick, setRefreshTick] = useState(0);
+
   const { data, isLoading } = useQuery<PortfolioSummary>({
-    queryKey: [`/api/summary?portfolio=${portfolio}&period=${period}&benchmark=${benchmark}`],
+    queryKey: [`/api/summary?portfolio=${portfolio}&period=${period}&benchmark=${benchmark}`, refreshTick],
   });
 
   const { toast } = useToast();
@@ -27,15 +30,22 @@ export default function PositionsPage({ portfolio, period, benchmark }: Props) {
   const [search, setSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/holdings/${id}`),
-    onSuccess: () => {
-      toast({ title: "Position deleted" });
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  function handleDelete(id: number) {
+    setIsDeleting(true);
+    try {
+      deleteHolding(id);
+      setRefreshTick(t => t + 1);
       queryClient.invalidateQueries();
+      toast({ title: "Position supprimée" });
+    } catch {
+      toast({ title: "Erreur lors de la suppression", variant: "destructive" });
+    } finally {
+      setIsDeleting(false);
       setConfirmDelete(null);
-    },
-    onError: () => toast({ title: "Error deleting position", variant: "destructive" }),
-  });
+    }
+  }
 
   const positions = data?.positions ?? [];
 
@@ -157,8 +167,8 @@ export default function PositionsPage({ portfolio, period, benchmark }: Props) {
                       <>
                         <button
                           data-testid={`btn-confirm-delete-${p.ticker}`}
-                          onClick={() => deleteMutation.mutate(p.id)}
-                          disabled={deleteMutation.isPending}
+                          onClick={() => handleDelete(p.id)}
+                          disabled={isDeleting}
                           style={{ fontSize: "9px", background: "var(--bb-red)", color: "#fff", border: "none", borderRadius: "2px", padding: "1px 5px", cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}
                         >YES</button>
                         <button

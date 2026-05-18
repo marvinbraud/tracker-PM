@@ -13,8 +13,8 @@
 /* ── Tokens ─────────────────────────────────────────── */
 :root {
   /* ─ Alias Bloomberg → ECI (rétrocompatibilité) ─ */
-  --bb-amber:       #113d63;
-  --bb-amber-dim:   #0d3054;
+  --bb-amber:       #c87e2e;
+  --bb-amber-dim:   #a56620;
   --bb-green:       #1a8a4a;
   --bb-red:         #c0392b;
   --bb-blue:        #2070b8;
@@ -26,7 +26,7 @@
   --bb-border:      #d0d6e0;
   --bb-border-2:    #b8c0cc;
   --bb-text:        #0e1a28;
-  --bb-text-muted:  #485059;
+  --bb-text-muted:  #5a6672;
   --bb-text-faint:  #8a9aab;
   /* ─────────────────────────────────────────────── */
 
@@ -89,7 +89,7 @@
   --bb-border-2:    #3a5470;
   --bb-text:        #ccd1d7;
   --bb-text-muted:  #8a9aab;
-  --bb-text-faint:  #485059;
+  --bb-text-faint:  #637080;
   /* ─────────────────────────────── */
 
   --bg:             #0a1220;
@@ -117,7 +117,7 @@
 
   --text:           #ccd1d7;
   --text-muted:     #8a9aab;
-  --text-faint:     #485059;
+  --text-faint:     #637080;
   --text-inverse:   #0a1220;
 
   --shadow-xs: 0 1px 2px rgba(0,0,0,.25);
