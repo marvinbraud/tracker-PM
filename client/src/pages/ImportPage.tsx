@@ -230,7 +230,7 @@ export default function ImportPage({ portfolio }: Props) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px", maxWidth: "900px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
       {/* ── Google Sheets ──────────────────────────────── */}
       <div className="bb-card">
@@ -370,14 +370,22 @@ export default function ImportPage({ portfolio }: Props) {
       </div>
 
       {/* ── Ajouter manuellement ───────────────────────── */}
-      <div className="bb-card">
+      <div className="bb-card" style={{ width: "100%" }}>
         <SectionHeader
           icon={<Plus size={14} />}
           title="Add a position manually"
         />
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div className="field" style={{ minWidth: "140px" }}>
+        {/* Full-width grid — 12 equal columns */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1.6fr 1fr 1.8fr 1.2fr 1.3fr 1fr 1fr 1fr 1fr 0.9fr 1.8fr auto",
+          gap: "8px",
+          alignItems: "end",
+          width: "100%",
+        }}>
+          {/* Portfolio */}
+          <div className="field">
             <label className="field-label">Portfolio</label>
             <select
               value={newRow.portfolio}
@@ -391,23 +399,32 @@ export default function ImportPage({ portfolio }: Props) {
             </select>
           </div>
 
-          {([
-            { key: "ticker",   label: "Ticker",     w: "80px",  type: "text"   },
-            { key: "name",     label: "Name",       w: "140px", type: "text"   },
-          ] as const).map(({ key, label, w, type }) => (
-            <div key={key} className="field" style={{ width: w }}>
-              <label className="field-label">{label}</label>
-              <input
-                type={type}
-                value={(newRow as any)[key] ?? ""}
-                onChange={e => setNewRow(r => ({ ...r, [key]: e.target.value }))}
-                className="field-input"
-                data-testid={`input-new-${key}`}
-              />
-            </div>
-          ))}
+          {/* Ticker */}
+          <div className="field">
+            <label className="field-label">Ticker</label>
+            <input
+              type="text"
+              value={newRow.ticker}
+              onChange={e => setNewRow(r => ({ ...r, ticker: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-ticker"
+            />
+          </div>
 
-          <div className="field" style={{ width: "90px" }}>
+          {/* Name */}
+          <div className="field">
+            <label className="field-label">Name</label>
+            <input
+              type="text"
+              value={newRow.name}
+              onChange={e => setNewRow(r => ({ ...r, name: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-name"
+            />
+          </div>
+
+          {/* Class */}
+          <div className="field">
             <label className="field-label">Class</label>
             <select
               value={newRow.assetClass}
@@ -419,38 +436,97 @@ export default function ImportPage({ portfolio }: Props) {
             </select>
           </div>
 
-          {([
-            { key: "sector",       label: "Sector",     w: "90px"  },
-            { key: "geography",    label: "Geo",        w: "80px"  },
-            { key: "quantity",     label: "Quantity",   w: "70px"  },
-            { key: "costPrice",    label: "Cost",       w: "70px"  },
-            { key: "currentPrice", label: "Price",      w: "70px"  },
-            { key: "currency",     label: "Currency",   w: "55px"  },
-            { key: "isin",         label: "ISIN",       w: "110px" },
-          ] as const).map(({ key, label, w }) => (
-            <div key={key} className="field" style={{ width: w }}>
-              <label className="field-label">{label}</label>
-              <input
-                type="text"
-                value={(newRow as any)[key] ?? ""}
-                onChange={e => setNewRow(r => ({
-                  ...r,
-                  [key]: ["quantity", "costPrice", "currentPrice"].includes(key)
-                    ? e.target.value === "" ? undefined : parseFloat(e.target.value)
-                    : e.target.value,
-                }))}
-                className="field-input"
-                data-testid={`input-new-${key}`}
-              />
-            </div>
-          ))}
+          {/* Sector */}
+          <div className="field">
+            <label className="field-label">Sector</label>
+            <input
+              type="text"
+              value={newRow.sector}
+              onChange={e => setNewRow(r => ({ ...r, sector: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-sector"
+            />
+          </div>
 
+          {/* Geo */}
+          <div className="field">
+            <label className="field-label">Geo</label>
+            <input
+              type="text"
+              value={newRow.geography}
+              onChange={e => setNewRow(r => ({ ...r, geography: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-geography"
+            />
+          </div>
+
+          {/* Quantity */}
+          <div className="field">
+            <label className="field-label">Quantity</label>
+            <input
+              type="number"
+              value={newRow.quantity || ""}
+              onChange={e => setNewRow(r => ({ ...r, quantity: parseFloat(e.target.value) || 0 }))}
+              className="field-input"
+              data-testid="input-new-quantity"
+            />
+          </div>
+
+          {/* Cost */}
+          <div className="field">
+            <label className="field-label">Cost</label>
+            <input
+              type="number"
+              value={newRow.costPrice || ""}
+              onChange={e => setNewRow(r => ({ ...r, costPrice: parseFloat(e.target.value) || 0 }))}
+              className="field-input"
+              data-testid="input-new-costPrice"
+            />
+          </div>
+
+          {/* Price */}
+          <div className="field">
+            <label className="field-label">Price</label>
+            <input
+              type="number"
+              value={newRow.currentPrice ?? ""}
+              onChange={e => setNewRow(r => ({ ...r, currentPrice: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+              className="field-input"
+              data-testid="input-new-currentPrice"
+            />
+          </div>
+
+          {/* Currency */}
+          <div className="field">
+            <label className="field-label">Currency</label>
+            <input
+              type="text"
+              value={newRow.currency}
+              onChange={e => setNewRow(r => ({ ...r, currency: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-currency"
+            />
+          </div>
+
+          {/* ISIN */}
+          <div className="field">
+            <label className="field-label">ISIN</label>
+            <input
+              type="text"
+              value={newRow.isin ?? ""}
+              onChange={e => setNewRow(r => ({ ...r, isin: e.target.value }))}
+              className="field-input"
+              data-testid="input-new-isin"
+            />
+          </div>
+
+          {/* Add button — aligned to bottom of row */}
           <button
             data-testid="btn-add-position"
             onClick={handleAddRow}
             disabled={!newRow.ticker || !newRow.quantity}
             className="btn btn-primary"
-            style={{ display: "flex", alignItems: "center", gap: "6px", alignSelf: "flex-end" }}
+            style={{ display: "flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap", height: "32px" }}
           >
             <Plus size={13} /> Add
           </button>
