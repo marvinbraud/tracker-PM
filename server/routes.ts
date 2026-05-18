@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import yahooFinance from "yahoo-finance2";
 import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
 import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchLiveMacroData, fetchBigMacIndex } from "./marketData";
@@ -14,9 +13,6 @@ import {
 // ─── Yahoo Finance in-memory cache ───────────────────────────────────────────
 const QUOTE_CACHE_TTL = 60_000; // 60 seconds
 const quoteCache = new Map<string, { data: any; ts: number }>();
-
-// Suppress yahoo-finance2 survey notice
-yahooFinance.setGlobalConfig({ suppress: ["yahooSurvey"] } as any);
 
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
@@ -434,7 +430,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
-  /** GET /api/quote?symbols=AAPL,MC.PA — Yahoo Finance live price proxy via yahoo-finance2 */
+  /** GET /api/quote?symbols=AAPL,MC.PA — Yahoo Finance live price proxy (v8 chart, no external lib) */
   app.get("/api/quote", async (req, res) => {
     const symbolsParam = req.query.symbols as string | undefined;
     if (!symbolsParam) {
@@ -460,39 +456,50 @@ export function registerRoutes(httpServer: Server, app: Express) {
       }
     }
 
-    // Fetch uncached symbols
-    if (toFetch.length > 0) {
+    // Fetch uncached symbols via Yahoo Finance v8 chart endpoint (no auth required)
+    await Promise.all(toFetch.map(async (sym) => {
       try {
-        const raw = await yahooFinance.quote(toFetch, {
-          fields: [
-            "regularMarketPrice", "regularMarketChangePercent",
-            "regularMarketPreviousClose", "currency", "shortName", "marketState",
-          ],
+        const url =
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}` +
+          `?range=1d&interval=1d&includePrePost=false`;
+
+        const r = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; ECI-Dashboard/2.0)",
+            "Accept": "application/json",
+          },
+          signal: AbortSignal.timeout(8_000),
         });
-        const quotes = Array.isArray(raw) ? raw : [raw];
-        for (const q of quotes) {
-          if (q && q.regularMarketPrice != null) {
-            const item = {
-              symbol:                       q.symbol,
-              regularMarketPrice:           q.regularMarketPrice,
-              regularMarketChangePercent:   q.regularMarketChangePercent   ?? 0,
-              regularMarketPreviousClose:   q.regularMarketPreviousClose   ?? q.regularMarketPrice,
-              currency:                     q.currency                     ?? "USD",
-              shortName:                    q.shortName                    ?? undefined,
-              marketState:                  q.marketState                  ?? undefined,
-            };
-            quoteCache.set(q.symbol, { data: item, ts: now });
-            result.push(item);
-          }
+
+        if (!r.ok) {
+          console.warn(`[quote] ${sym} → HTTP ${r.status}`);
+          return;
         }
+
+        const data = await r.json() as any;
+        const meta = data?.chart?.result?.[0]?.meta;
+        if (!meta?.regularMarketPrice) return;
+
+        const price     = meta.regularMarketPrice as number;
+        const prevClose = (meta.chartPreviousClose ?? meta.previousClose ?? price) as number;
+        const changePct = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+
+        const item = {
+          symbol:                     sym,
+          regularMarketPrice:         price,
+          regularMarketChangePercent: changePct,
+          regularMarketPreviousClose: prevClose,
+          currency:                   (meta.currency    ?? "USD") as string,
+          shortName:                  (meta.shortName   ?? undefined) as string | undefined,
+          marketState:                (meta.marketState ?? undefined) as string | undefined,
+        };
+
+        quoteCache.set(sym, { data: item, ts: now });
+        result.push(item);
       } catch (err) {
-        console.warn("[quote] yahoo-finance2 error:", (err as Error)?.message);
-        // Return partial result (cached hits) rather than a hard error
-        if (result.length === 0) {
-          return res.status(502).json({ error: "Yahoo Finance unreachable — try again later" });
-        }
+        console.warn(`[quote] fetch failed for ${sym}:`, (err as Error)?.message);
       }
-    }
+    }));
 
     res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return res.json({ quoteResponse: { result, error: null } });
