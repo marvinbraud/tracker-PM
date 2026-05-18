@@ -48,25 +48,28 @@ const FIXED_PRICES: Record<string, TickerData> = {
 // ─── Price fetch ──────────────────────────────────────────────────────────────
 async function fetchYahooPrice(ticker: string): Promise<TickerData | null> {
   try {
-    const url = `https://yahoo-finance-real-time1.p.rapidapi.com/market/get-quotes?region=US&symbols=${ticker}`;
+    const url =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+      `?range=1d&interval=1d&includePrePost=false`;
     const res = await fetch(url, {
       headers: {
-        "X-RapidAPI-Key": "0d6b10fe86mshaf757ad0ada2533p1963f6jsn74204fe24d52",
-        "X-RapidAPI-Host": "yahoo-finance-real-time1.p.rapidapi.com"
-      }
+        "User-Agent": "Mozilla/5.0 (compatible; ECI-Dashboard/2.0)",
+        "Accept":     "application/json",
+      },
+      signal: AbortSignal.timeout(8_000),
     });
-    if (!res.ok) throw new Error(`RapidAPI Error: ${res.status}`);
-    const json = await res.json();
-    const quote = json?.quoteResponse?.result?.[0];
-    if (!quote) return null;
+    if (!res.ok) return null;
+    const data  = await res.json() as any;
+    const meta  = data?.chart?.result?.[0]?.meta;
+    if (!meta?.regularMarketPrice) return null;
 
-    const price = quote.regularMarketPrice ?? quote.postMarketPrice ?? quote.previousClose ?? 0;
-    const prev = quote.regularMarketPreviousClose ?? quote.previousClose ?? price;
-    const dayChange = prev > 0 ? ((price - prev) / prev) * 100 : 0;
-    
-    return { price, dayChange, currency: quote.currency ?? "USD" };
-  } catch (err: any) {
-    console.warn(`[yahoo] failed to fetch price for ${ticker}:`, err.message);
+    const price     = meta.regularMarketPrice as number;
+    const prevClose = (meta.chartPreviousClose ?? meta.previousClose ?? price) as number;
+    const dayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+
+    return { price, dayChange, currency: (meta.currency ?? "USD") as string };
+  } catch (err) {
+    console.warn(`[yahoo] failed to fetch price for ${ticker}:`, (err as Error)?.message);
     return null;
   }
 }

@@ -85,8 +85,8 @@ export default function PositionsPage({ portfolio, period, benchmark }: Props) {
     { key: "currentPrice", label: "Price" },
     { key: "quantity", label: "Qty" },
     { key: "costPrice", label: "Cost" },
-    { key: "marketValue", label: "Mkt Value" },
-    { key: "pnlAmount", label: "P&L €" },
+    { key: "marketValue", label: "Mkt Val €" },
+    { key: "pnlAmount", label: "P&L" },
     { key: "pnlPct", label: "P&L %" },
     { key: "weight", label: "Weight" },
     { key: "dayChange", label: "Δ Day" },
@@ -185,7 +185,14 @@ export default function PositionsPage({ portfolio, period, benchmark }: Props) {
                 </td>
                 <td style={{ textAlign: "left", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", color: "var(--bb-text)" }}>{p.name}</td>
                 <td><Badge cls={p.assetClass} /></td>
-                <td className="tabnum" style={{ color: "var(--bb-text)" }}>{p.currentPrice.toLocaleString("fr-FR", { minimumFractionDigits: p.currentPrice > 100 ? 2 : 4, maximumFractionDigits: p.currentPrice > 100 ? 2 : 4 })}</td>
+                <td className="tabnum" style={{ color: "var(--bb-text)" }}>
+                  <span>{p.currentPrice.toLocaleString("fr-FR", { minimumFractionDigits: p.currentPrice > 100 ? 2 : 4, maximumFractionDigits: p.currentPrice > 100 ? 2 : 4 })}</span>
+                  {p.priceCurrency && p.priceCurrency !== "EUR" && (
+                    <span style={{ fontSize: "9px", color: "var(--bb-text-faint)", marginLeft: "3px", fontWeight: 400 }}>
+                      {p.priceCurrency}
+                    </span>
+                  )}
+                </td>
                 <td className="tabnum" style={{ color: "var(--bb-text-muted)" }}>{fmtQty(p.quantity)}</td>
                 <td className="tabnum" style={{ color: "var(--bb-text-muted)" }}>{p.costPrice.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="tabnum" style={{ color: "var(--bb-amber)", fontWeight: 600 }}>{fmt(p.marketValue)}</td>

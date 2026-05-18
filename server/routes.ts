@@ -207,19 +207,39 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
       // Enrich with live prices + history (all async in parallel)
       const positions: Position[] = await Promise.all(holdings.map(async h => {
-        const priceData = await getMockPrice(h.ticker);
-        const history = await generateHistory(h.ticker, priceData.price, 365);
-        const currentPrice = priceData.price;
-        // Market value: convert using the price's native currency (from Yahoo)
-        // e.g. 2359.HK → price in HKD → convert HKD→EUR
+        const isCash = h.assetClass.toLowerCase() === "cash" || h.ticker.toLowerCase().startsWith("cash");
+
+        if (isCash) {
+          // Cash: price is always 1.00 in its native currency — never fluctuates with FX
+          const priceCurrency = h.currency;
+          const fxRate        = getExchangeRate(h.currency, BASE_CURRENCY);
+          const currentPrice  = 1.0;
+          const marketValue   = h.quantity * fxRate;           // convert to EUR for totals
+          const costBasis     = h.quantity * fxRate;           // P&L = 0 for cash
+          const flatHistory   = await generateHistory(h.ticker, h.quantity, 365); // flat line
+          return {
+            id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
+            assetClass: h.assetClass, sector: h.sector, geography: h.geography,
+            quantity: h.quantity, costPrice: h.costPrice, currency: h.currency,
+            priceCurrency,
+            isin: h.isin ?? "", currentPrice, marketValue, costBasis,
+            pnlAmount: 0, pnlPct: 0, weight: 0, dayChange: 0, history: flatHistory,
+          };
+        }
+
+        // Non-cash: fetch from Yahoo Finance via getMockPrice
+        const priceData     = await getMockPrice(h.ticker);
+        const history       = await generateHistory(h.ticker, priceData.price, 365);
+        const currentPrice  = priceData.price;
+        // Market value: use the ticker's native currency from Yahoo, convert to EUR
         const priceCurrency = priceData.currency || h.currency;
-        const fxRatePrice = getExchangeRate(priceCurrency, BASE_CURRENCY);
-        const marketValue = h.quantity * currentPrice * fxRatePrice;
-        // Cost basis: user always enters costPrice in EUR (h.currency), convert that
-        const fxRateCost = getExchangeRate(h.currency, BASE_CURRENCY);
-        const costBasis = h.quantity * h.costPrice * fxRateCost;
-        const pnlAmount = marketValue - costBasis;
-        const pnlPct = costBasis > 0 ? (pnlAmount / costBasis) * 100 : 0;
+        const fxRatePrice   = getExchangeRate(priceCurrency, BASE_CURRENCY);
+        const marketValue   = h.quantity * currentPrice * fxRatePrice;
+        // Cost basis: user enters costPrice in h.currency
+        const fxRateCost    = getExchangeRate(h.currency, BASE_CURRENCY);
+        const costBasis     = h.quantity * h.costPrice * fxRateCost;
+        const pnlAmount     = marketValue - costBasis;
+        const pnlPct        = costBasis > 0 ? (pnlAmount / costBasis) * 100 : 0;
         return {
           id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
           assetClass: h.assetClass, sector: h.sector, geography: h.geography,
