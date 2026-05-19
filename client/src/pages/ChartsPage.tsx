@@ -87,7 +87,7 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
             <ReferenceLine y={0} stroke="var(--bb-border-2)" strokeDasharray="2 2" />
             <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px", fontFamily: "IBM Plex Mono" }}
               formatter={(v: number, n: string) => [`${v >= 0 ? "+" : ""}${v.toFixed(2)}%`, n]} />
-            <Legend iconSize={8} wrapperStyle={{ fontSize: "10px" }} />
+            <Legend iconSize={8} wrapperStyle={{ fontSize: "10px", color: "var(--bb-text)" }} />
             <Line type="monotone" dataKey="Portefeuille (%)" stroke="var(--bb-amber)" dot={false} strokeWidth={1.5} />
             <Line type="monotone" dataKey={`${benchmark} (%)`} stroke="var(--bb-blue)" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
             <Line type="monotone" dataKey="Surperf." stroke="var(--bb-green)" dot={false} strokeWidth={1} strokeDasharray="2 3" />
@@ -204,7 +204,7 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px" }}
                   formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n]} />
-                <Legend iconSize={7} wrapperStyle={{ fontSize: "9px" }} />
+                <Legend iconSize={7} wrapperStyle={{ fontSize: "9px", color: "var(--bb-text)" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>

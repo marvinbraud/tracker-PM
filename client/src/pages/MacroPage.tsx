@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -84,31 +84,8 @@ type SeriesKey = typeof LIVE_INDICES[number]["key"];
 interface LiveQuote { price: number; dayChange: number; ytd: number }
 interface SeriesHistory { dates: string[]; closes: number[] }
 
-async function _fetchYtd(ticker: string): Promise<SeriesHistory | null> {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=ytd&interval=1wk&includePrePost=false`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ECI/2.0)", "Accept": "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as any;
-    const result = json?.chart?.result?.[0];
-    if (!result) return null;
-    const timestamps: number[] = result.timestamp ?? [];
-    const rawCloses: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
-    const dates: string[] = [];
-    const closes: number[] = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      const c = rawCloses[i];
-      if (c == null || isNaN(c)) continue;
-      const d = new Date(timestamps[i] * 1000);
-      dates.push(`${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`);
-      closes.push(c);
-    }
-    return dates.length > 0 ? { dates, closes } : null;
-  } catch { return null; }
-}
+// Indices data is now fetched server-side to avoid CORS issues
+// The _fetchYtd function is kept for typing reference only
 
 function _buildChartData(all: Partial<Record<SeriesKey, SeriesHistory | null>>): Record<string, number | string>[] {
   // Find the series with the most data points → master date axis
@@ -135,41 +112,34 @@ function _buildChartData(all: Partial<Record<SeriesKey, SeriesHistory | null>>):
 
 function useIndexHistory() {
   const today = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
-  const [state, setState] = useState<{
-    chartData: Record<string, number | string>[];
-    quotes: Partial<Record<SeriesKey, LiveQuote>>;
-    loading: boolean;
-    updatedAt: string;
-  }>({ chartData: [], quotes: {}, loading: true, updatedAt: today });
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const all: Partial<Record<SeriesKey, SeriesHistory | null>> = {};
-      const quotes: Partial<Record<SeriesKey, LiveQuote>> = {};
-      await Promise.allSettled(
-        LIVE_INDICES.map(async ({ key, ticker }) => {
-          const s = await _fetchYtd(ticker);
-          all[key] = s;
-          if (s && s.closes.length >= 2) {
-            const first = s.closes[0], last = s.closes[s.closes.length - 1];
-            const prev  = s.closes[s.closes.length - 2];
-            quotes[key] = {
-              price:     last,
-              dayChange: prev > 0 ? ((last - prev) / prev) * 100 : 0,
-              ytd:       parseFloat(((last / first - 1) * 100).toFixed(2)),
-            };
-          }
-        })
-      );
-      if (!alive) return;
-      setState({ chartData: _buildChartData(all), quotes, loading: false, updatedAt: today });
-    })();
-    return () => { alive = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: rawData, isLoading } = useQuery<Partial<Record<SeriesKey, SeriesHistory | null>>>({
+    queryKey: ["/api/indices-ytd"],
+    staleTime: 5 * 60 * 1000, // 5 min
+    retry: 2,
+  });
 
-  return state;
+  const all = rawData ?? {};
+  const quotes: Partial<Record<SeriesKey, LiveQuote>> = {};
+  for (const { key } of LIVE_INDICES) {
+    const s = all[key];
+    if (s && s.closes.length >= 2) {
+      const first = s.closes[0], last = s.closes[s.closes.length - 1];
+      const prev  = s.closes[s.closes.length - 2];
+      quotes[key] = {
+        price:     last,
+        dayChange: prev > 0 ? ((last - prev) / prev) * 100 : 0,
+        ytd:       parseFloat(((last / first - 1) * 100).toFixed(2)),
+      };
+    }
+  }
+
+  return {
+    chartData: _buildChartData(all),
+    quotes,
+    loading: isLoading,
+    updatedAt: today,
+  };
 }
 
 function IndicesSection() {

@@ -25,6 +25,57 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   /** GET /api/macro — live macro indicators and Big Mac index */
+  /** GET /api/indices-ytd — YTD history for global indices (server-side proxy → no CORS) */
+  app.get("/api/indices-ytd", async (_req, res) => {
+    const INDICES = [
+      { key: "SPX",   ticker: "^GSPC"   },
+      { key: "NDX",   ticker: "^NDX"    },
+      { key: "CAC",   ticker: "^FCHI"   },
+      { key: "DAX",   ticker: "^GDAXI"  },
+      { key: "NI225", ticker: "^N225"   },
+      { key: "MXWO",  ticker: "IWDA.AS" },
+      { key: "MXEF",  ticker: "EEM"     },
+      { key: "HSI",   ticker: "^HSI"    },
+    ] as const;
+
+    try {
+      const results = await Promise.allSettled(
+        INDICES.map(async ({ key, ticker }) => {
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=ytd&interval=1wk&includePrePost=false`;
+          const r = await fetch(url, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; ECI-Dashboard/2.0)", "Accept": "application/json" },
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!r.ok) return { key, data: null };
+          const json = await r.json() as any;
+          const result = json?.chart?.result?.[0];
+          if (!result) return { key, data: null };
+          const timestamps: number[] = result.timestamp ?? [];
+          const rawCloses: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
+          const dates: string[] = [];
+          const closes: number[] = [];
+          for (let i = 0; i < timestamps.length; i++) {
+            const c = rawCloses[i];
+            if (c == null || isNaN(c)) continue;
+            const d = new Date(timestamps[i] * 1000);
+            dates.push(`${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`);
+            closes.push(c);
+          }
+          return { key, data: dates.length > 0 ? { dates, closes } : null };
+        })
+      );
+
+      const out: Record<string, { dates: string[]; closes: number[] } | null> = {};
+      for (const r of results) {
+        if (r.status === "fulfilled") out[r.value.key] = r.value.data;
+      }
+      res.json(out);
+    } catch (err) {
+      console.error("[indices-ytd]", err);
+      res.status(500).json({});
+    }
+  });
+
   app.get("/api/macro", async (_req, res) => {
     try {
       const [macroData, bigMacData] = await Promise.all([
@@ -605,14 +656,14 @@ function periodToDays(period: string): number {
 }
 
 function ytdDays(): number {
-  const now = new Date("2026-03-15");
-  const startOfYear = new Date("2026-01-01");
-  return Math.ceil((now.getTime() - startOfYear.getTime()) / (1000 * 86400));
+  const now = new Date();
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  return Math.max(1, Math.ceil((now.getTime() - startOfYear.getTime()) / (1000 * 86400)));
 }
 
 function buildDateSeries(period: string): string[] {
   const days = periodToDays(period);
-  const end = new Date("2026-03-15");
+  const end = new Date(); // always use today
   const dates: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(end);

@@ -206,6 +206,32 @@ export function getExchangeRate(from: string, to: string): number {
 }
 
 // ─── GBM fallback ─────────────────────────────────────────────────────────────
+// Simple deterministic hash → reproducible GBM per ticker
+function tickerSeed(ticker: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < ticker.length; i++) {
+    h ^= ticker.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h;
+}
+// Mulberry32 PRNG — fast, seedable
+function makePrng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussianFromPrng(rand: () => number): number {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
 function buildGBMHistory(ticker: string, currentPrice: number, days: number): { date: string; close: number }[] {
   const volMap: Record<string, number> = {
     "BTC-USD": 0.80, "ETH-USD": 0.95, "SOL-USD": 1.20,
@@ -213,12 +239,13 @@ function buildGBMHistory(ticker: string, currentPrice: number, days: number): { 
   };
   const sigma = volMap[ticker] ?? 0.22;
   const mu = 0.08, dt = 1 / 252;
-  const endDate = new Date("2026-03-15");
+  const endDate = new Date(); // always use today
+  const rand = makePrng(tickerSeed(ticker));
   let prices: number[] = [currentPrice];
   for (let i = 1; i < days; i++) {
     const prev = prices[0];
-    const rand = gaussianRandom();
-    prices.unshift(Math.max(prev / Math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * rand), 0.01));
+    const r = gaussianFromPrng(rand);
+    prices.unshift(Math.max(prev / Math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * r), 0.01));
   }
   const result: { date: string; close: number }[] = [];
   const isCrypto = ticker.includes("USD") || ticker.includes("BTC") || ticker.includes("ETH");
@@ -233,7 +260,7 @@ function buildGBMHistory(ticker: string, currentPrice: number, days: number): { 
 
 function buildFlatHistory(price: number, days: number): { date: string; close: number }[] {
   const result: { date: string; close: number }[] = [];
-  const end = new Date("2026-03-15");
+  const end = new Date(); // always use today
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(end);
     d.setDate(d.getDate() - i);
