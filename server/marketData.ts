@@ -106,8 +106,8 @@ export async function getMockPrice(ticker: string): Promise<TickerData> {
 // ─── History fetch ────────────────────────────────────────────────────────────
 async function fetchYahooHistory(ticker: string, days: number): Promise<{ date: string; close: number }[] | null> {
   try {
-    // Use Yahoo Finance v8 chart endpoint — no external library, works from cloud IPs
-    const range  = days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo" : "1y";
+    const range  = days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo"
+                 : days <= 380 ? "1y" : days <= 760 ? "2y" : "5y";
     const url    = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
                    `?range=${range}&interval=1d&includePrePost=false`;
 

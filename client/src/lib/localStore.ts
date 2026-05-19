@@ -332,9 +332,24 @@ export async function syncAllGSheets(): Promise<
 
 // ─── Portfolio Summary Computation ───────────────────────────────────────
 
+// Static FX rates (1 CURRENCY → EUR). Updated periodically.
+// Live rates are refreshed when positions are saved via /api/quote.
 const EUR_RATES: Record<string, number> = {
-  EUR: 1, USD: 0.92, GBP: 1.17, CHF: 1.06, JPY: 0.0062,
-  CAD: 0.68, AUD: 0.60, HKD: 0.12, SGD: 0.69, SEK: 0.087,
+  EUR: 1,     USD: 0.921,  GBP: 1.172,  CHF: 1.065,  JPY: 0.00620,
+  CAD: 0.680, AUD: 0.601,  HKD: 0.118,  SGD: 0.692,  SEK: 0.0872,
+  // Asia
+  CNY: 0.127, CNH: 0.127,  // Chinese Yuan (mainland / offshore)
+  HKD: 0.118, TWD: 0.0284, KRW: 0.000672, SGD: 0.692,
+  INR: 0.0110, THB: 0.0253, IDR: 0.0000566, MYR: 0.207,
+  // Middle East
+  SAR: 0.245, AED: 0.251,  QAR: 0.253,  KWD: 2.99,
+  // LatAm
+  BRL: 0.165, MXN: 0.0459, ARS: 0.00092, CLP: 0.000972,
+  // EMEA
+  NOK: 0.0866, DKK: 0.1342, PLN: 0.233,  CZK: 0.0408,
+  ZAR: 0.0488, TRY: 0.0258, ILS: 0.254,  EGP: 0.0185,
+  // Others
+  NZD: 0.556,  RUB: 0.00989,
 };
 
 function toEur(amount: number, currency: string): number {

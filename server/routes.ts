@@ -144,6 +144,42 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  /** GET /api/benchmark-history?ticker=SPY&period=1Y
+   *  Returns real historical closes for a benchmark ticker (server-side Yahoo proxy).
+   *  Response: { byDate: Record<string, number>, ticker, period, points }
+   *  Used by the client to overlay real benchmark data on the portfolio chart.
+   */
+  app.get("/api/benchmark-history", async (req, res) => {
+    const ticker = ((req.query.ticker as string) || "SPY").trim();
+    const period = ((req.query.period  as string) || "1Y").trim();
+
+    // Map period → how many calendar days to request from Yahoo
+    const periodDaysMap: Record<string, number> = {
+      "1W": 10, "1M": 35, "3M": 95, "6M": 190,
+      "YTD": Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 5,
+      "1Y": 380, "3Y": 800, "Max": 1300,
+    };
+    const days = periodDaysMap[period] ?? 380;
+
+    try {
+      const priceData = await getMockPrice(ticker);
+      const history   = await generateHistory(ticker, priceData.price > 0 ? priceData.price : 100, days);
+
+      if (!history || history.length === 0) {
+        return res.json({ byDate: {}, ticker, period, points: 0 });
+      }
+
+      const byDate: Record<string, number> = {};
+      for (const { date, close } of history) byDate[date] = close;
+
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=7200");
+      return res.json({ byDate, ticker, period, points: history.length });
+    } catch (err) {
+      console.error("[benchmark-history]", err);
+      return res.json({ byDate: {}, ticker, period, points: 0 });
+    }
+  });
+
   app.get("/api/macro", async (_req, res) => {
     try {
       const [macroData, bigMacData] = await Promise.all([
