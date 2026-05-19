@@ -158,7 +158,7 @@ export default function ChartsPage({ portfolio, period, benchmark }: Props) {
                   tickFormatter={v => `${v}%`} width={30} />
                 <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px" }}
                   formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n]} />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: "9px" }} />
+                <Legend iconSize={8} wrapperStyle={{ fontSize: "9px", color: "var(--bb-text)" }} />
                 <Line type="monotone" dataKey="vol"   stroke="var(--bb-cyan)"  dot={false} strokeWidth={1.5} name="Portefeuille" />
                 <Line type="monotone" dataKey="bench" stroke="var(--bb-amber)" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name={benchmark} />
               </LineChart>

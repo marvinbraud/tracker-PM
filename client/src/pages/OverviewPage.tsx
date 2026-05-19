@@ -175,7 +175,7 @@ export default function OverviewPage({ portfolio, period, benchmark }: Props) {
               formatter={(v: number, name: string) => [`${v >= 0 ? "+" : ""}${v.toFixed(2)}%`, name]}
               labelStyle={{ color: "var(--bb-text-muted)", marginBottom: "2px" }}
             />
-            <Legend iconSize={8} wrapperStyle={{ fontSize: "10px", fontFamily: "IBM Plex Mono" }} />
+            <Legend iconSize={8} wrapperStyle={{ fontSize: "10px", fontFamily: "IBM Plex Mono", color: "var(--bb-text)" }} />
             <Line type="monotone" dataKey="Portfolio" stroke="var(--bb-amber)" dot={false} strokeWidth={1.5} />
             <Line type="monotone" dataKey={benchmark} stroke="var(--bb-blue)" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
           </LineChart>
@@ -199,7 +199,7 @@ export default function OverviewPage({ portfolio, period, benchmark }: Props) {
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--bb-surface)", border: "1px solid var(--bb-border)", fontSize: "10px" }}
                   formatter={(v: number, name: string) => [fmt(v), name]} />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: "9px" }} />
+                <Legend iconSize={8} wrapperStyle={{ fontSize: "9px", color: "var(--bb-text)" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>

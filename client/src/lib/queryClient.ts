@@ -22,6 +22,15 @@ function parseQuery(url: string): URLSearchParams {
   return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : "");
 }
 
+// Routes servies localement (localStorage, pas de réseau)
+const LOCAL_PATHS = new Set([
+  "/api/portfolios",
+  "/api/summary",
+  "/api/settings/gsheet",
+  "/api/holdings",
+  "/api/macro",
+]);
+
 function localGet(url: string): unknown {
   const path = url.split("?")[0];
 
@@ -56,18 +65,35 @@ function localGet(url: string): unknown {
     return getMacroData();
   }
 
-  // Fallback: query inconnue
-  console.warn("[localRouter] Route inconnue:", url);
-  return null;
+  return undefined; // signal: not handled locally
 }
 
 // ─── Query function ───────────────────────────────────────────────────────
 
-const localQueryFn: QueryFunction = ({ queryKey }) => {
+const localQueryFn: QueryFunction = async ({ queryKey }) => {
   const url = Array.isArray(queryKey)
     ? queryKey.map(String).join("").replace(/\/+/g, "/")
     : String(queryKey);
-  return Promise.resolve(localGet(url));
+
+  const path = url.split("?")[0];
+
+  // Routes gérées localement (localStorage)
+  if (LOCAL_PATHS.has(path)) {
+    return localGet(url);
+  }
+
+  // Fallback: appel HTTP réel vers le serveur (ex: /api/indices-ytd)
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn("[localRouter] HTTP error:", res.status, url);
+      return null;
+    }
+    return res.json();
+  } catch (err) {
+    console.warn("[localRouter] fetch failed:", url, err);
+    return null;
+  }
 };
 
 export const queryClient = new QueryClient({
