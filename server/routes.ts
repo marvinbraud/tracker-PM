@@ -16,6 +16,37 @@ const quoteCache = new Map<string, { data: any; ts: number }>();
 
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
+// ─── Portfolio computation cache (keyed by portfolio|period — NO benchmark) ──
+// This guarantees portfolio metrics (return, vol, Sharpe…) never change when
+// only the benchmark changes.
+interface PortfolioComputed {
+  positions: Position[];
+  portReturns: number[];
+  portfolioValues: number[];
+  metrics_stable: {
+    totalValue: number; totalCostBasis: number;
+    totalPnlAmount: number; totalPnlPct: number;
+    annualizedReturn: number; volatility: number;
+    sharpeRatio: number; sortinoRatio: number;
+    maxDrawdown: number; calmarRatio: number;
+    var95: number; expectedShortfall: number;
+    ytdReturn: number; oneMonthReturn: number; oneYearReturn: number;
+  };
+  allocationByClass: any[]; allocationBySector: any[];
+  allocationByCurrency: any[]; allocationByGeo: any[];
+  topGainers: Position[]; topLosers: Position[];
+  chartDates: string[]; portfolioHistoryValues: number[];
+}
+const portfolioComputeCache = new Map<string, { data: PortfolioComputed; expiresAt: number }>();
+const PORTFOLIO_COMPUTE_TTL = 5 * 60 * 1000; // 5 min — matches price cache TTL
+
+function invalidatePortfolioCache(portfolio?: string) {
+  if (!portfolio) { portfolioComputeCache.clear(); return; }
+  for (const key of portfolioComputeCache.keys()) {
+    if (key.startsWith(portfolio + "|")) portfolioComputeCache.delete(key);
+  }
+}
+
 export function registerRoutes(httpServer: Server, app: Express) {
 
   /** GET /api/portfolios — list all portfolio roots with sub-accounts */
@@ -226,6 +257,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
           const ts = new Date().toISOString();
           await storage.setLastSyncAt(portfolioName, ts);
+          invalidatePortfolioCache(portfolioName); // holdings changed after sync
           results[portfolioName] = { imported: rows.length, lastSyncAt: ts };
         } catch (innerErr) {
           results[portfolioName] = { error: String(innerErr) };
@@ -245,149 +277,143 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.get("/api/summary", async (req, res) => {
     try {
       const portfolio = (req.query.portfolio as string) || "Global";
-      const period = (req.query.period as string) || "1Y";
+      const period    = (req.query.period    as string) || "1Y";
       const benchmark = (req.query.benchmark as string) || "SPY";
 
       const holdings = await storage.getHoldings(portfolio);
-      if (holdings.length === 0) {
-        return res.json(emptyPortfolio());
-      }
+      if (holdings.length === 0) return res.json(emptyPortfolio());
 
-      // Warm up FX rates async first
-      await getExchangeRateAsync("EUR", "USD").catch(() => {});
+      // ── 1. PORTFOLIO DATA — cached by portfolio|period (no benchmark) ──────
+      const portCacheKey = `${portfolio}|${period}`;
+      let computed = (() => {
+        const hit = portfolioComputeCache.get(portCacheKey);
+        return hit && hit.expiresAt > Date.now() ? hit.data : null;
+      })();
 
-      // Enrich with live prices + history (all async in parallel)
-      const positions: Position[] = await Promise.all(holdings.map(async h => {
-        const isCash = h.assetClass.toLowerCase() === "cash" || h.ticker.toLowerCase().startsWith("cash");
+      if (!computed) {
+        // Warm up FX rates
+        await getExchangeRateAsync("EUR", "USD").catch(() => {});
 
-        if (isCash) {
-          // Cash: price is always 1.00 in its native currency — never fluctuates with FX
-          const priceCurrency = h.currency;
-          const fxRate        = getExchangeRate(h.currency, BASE_CURRENCY);
-          const currentPrice  = 1.0;
-          const marketValue   = h.quantity * fxRate;           // convert to EUR for totals
-          const costBasis     = h.quantity * fxRate;           // P&L = 0 for cash
-          // Flat history at 1.0/unit — don't call generateHistory (avoids Yahoo fetch for cash)
-          const flatHistory = buildCashHistory(365);
+        // Enrich positions with live prices + history (all async in parallel)
+        const positions: Position[] = await Promise.all(holdings.map(async h => {
+          const isCash = h.assetClass.toLowerCase() === "cash" || h.ticker.toLowerCase().startsWith("cash");
+
+          if (isCash) {
+            const priceCurrency = h.currency;
+            const fxRate        = getExchangeRate(h.currency, BASE_CURRENCY);
+            const flatHistory   = buildCashHistory(365);
+            return {
+              id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
+              assetClass: h.assetClass, sector: h.sector, geography: h.geography,
+              quantity: h.quantity, costPrice: h.costPrice, currency: h.currency,
+              priceCurrency, isin: h.isin ?? "",
+              currentPrice: 1.0,
+              marketValue: h.quantity * fxRate,
+              costBasis:   h.quantity * fxRate,
+              pnlAmount: 0, pnlPct: 0, weight: 0, dayChange: 0, history: flatHistory,
+            };
+          }
+
+          const priceData     = await getMockPrice(h.ticker);
+          const history       = await generateHistory(h.ticker, priceData.price, 365);
+          const currentPrice  = priceData.price;
+          const priceCurrency = priceData.currency || h.currency;
+          const fxRatePrice   = getExchangeRate(priceCurrency, BASE_CURRENCY);
+          const marketValue   = h.quantity * currentPrice * fxRatePrice;
+          const fxRateCost    = getExchangeRate(h.currency, BASE_CURRENCY);
+          const costBasis     = h.quantity * h.costPrice * fxRateCost;
+          const pnlAmount     = marketValue - costBasis;
           return {
             id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
             assetClass: h.assetClass, sector: h.sector, geography: h.geography,
             quantity: h.quantity, costPrice: h.costPrice, currency: h.currency,
-            priceCurrency,
-            isin: h.isin ?? "", currentPrice, marketValue, costBasis,
-            pnlAmount: 0, pnlPct: 0, weight: 0, dayChange: 0, history: flatHistory,
+            priceCurrency, isin: h.isin ?? "", currentPrice, marketValue, costBasis,
+            pnlAmount, pnlPct: costBasis > 0 ? (pnlAmount / costBasis) * 100 : 0,
+            weight: 0, dayChange: priceData.dayChange, history,
           };
-        }
+        }));
 
-        // Non-cash: fetch from Yahoo Finance via getMockPrice
-        const priceData     = await getMockPrice(h.ticker);
-        const history       = await generateHistory(h.ticker, priceData.price, 365);
-        const currentPrice  = priceData.price;
-        // Market value: use the ticker's native currency from Yahoo, convert to EUR
-        const priceCurrency = priceData.currency || h.currency;
-        const fxRatePrice   = getExchangeRate(priceCurrency, BASE_CURRENCY);
-        const marketValue   = h.quantity * currentPrice * fxRatePrice;
-        // Cost basis: user enters costPrice in h.currency
-        const fxRateCost    = getExchangeRate(h.currency, BASE_CURRENCY);
-        const costBasis     = h.quantity * h.costPrice * fxRateCost;
-        const pnlAmount     = marketValue - costBasis;
-        const pnlPct        = costBasis > 0 ? (pnlAmount / costBasis) * 100 : 0;
-        return {
-          id: h.id, portfolio: h.portfolio, ticker: h.ticker, name: h.name,
-          assetClass: h.assetClass, sector: h.sector, geography: h.geography,
-          quantity: h.quantity, costPrice: h.costPrice, currency: h.currency,
-          priceCurrency,
-          isin: h.isin ?? "", currentPrice, marketValue, costBasis,
-          pnlAmount, pnlPct, weight: 0, dayChange: priceData.dayChange, history,
+        const totalValue = positions.reduce((s, p) => s + p.marketValue, 0);
+        positions.forEach(p => { p.weight = totalValue > 0 ? (p.marketValue / totalValue) * 100 : 0; });
+
+        const portfolioValues  = buildPortfolioValueSeries(positions, totalValue, period);
+        const portReturns      = dailyReturnsFromValues(portfolioValues);
+
+        const ytdValues      = buildPortfolioValueSeries(positions, totalValue, "YTD");
+        const oneMonthValues = buildPortfolioValueSeries(positions, totalValue, "1M");
+        const oneYearValues  = buildPortfolioValueSeries(positions, totalValue, "1Y");
+        const ytdRet         = ytdValues.length > 1      ? (ytdValues[ytdValues.length - 1] - ytdValues[0]) / ytdValues[0] : 0;
+        const oneMonthRet    = oneMonthValues.length > 1 ? (oneMonthValues[oneMonthValues.length - 1] - oneMonthValues[0]) / oneMonthValues[0] : 0;
+        const oneYearRet     = oneYearValues.length > 1  ? (oneYearValues[oneYearValues.length - 1]  - oneYearValues[0])  / oneYearValues[0]  : 0;
+
+        const totalCostBasis = positions.reduce((s, p) => s + p.costBasis, 0);
+        const totalPnlAmount = positions.reduce((s, p) => s + p.pnlAmount, 0);
+
+        const chartDates = buildDateSeries(period);
+        const portfolioHistoryValues = portfolioValues.slice(-chartDates.length);
+
+        computed = {
+          positions, portReturns, portfolioValues,
+          metrics_stable: {
+            totalValue, totalCostBasis, totalPnlAmount,
+            totalPnlPct: totalCostBasis > 0 ? (totalPnlAmount / totalCostBasis) * 100 : 0,
+            annualizedReturn: annualizedReturn(portReturns),
+            volatility:       annualizedVolatility(portReturns),
+            sharpeRatio:      sharpeRatio(portReturns),
+            sortinoRatio:     sortinoRatio(portReturns),
+            maxDrawdown:      maxDrawdown(portfolioValues),
+            calmarRatio:      calmarRatio(portReturns, portfolioValues),
+            var95:            historicalVaR(portReturns, totalValue),
+            expectedShortfall: expectedShortfall(portReturns, totalValue),
+            ytdReturn: ytdRet, oneMonthReturn: oneMonthRet, oneYearReturn: oneYearRet,
+          },
+          allocationByClass:    groupAllocation(positions, p => p.assetClass),
+          allocationBySector:   groupAllocation(positions, p => p.sector),
+          allocationByCurrency: groupAllocation(positions, p => p.currency),
+          allocationByGeo:      groupAllocation(positions, p => p.geography),
+          topGainers: [...positions].sort((a, b) => b.pnlPct - a.pnlPct).slice(0, 5),
+          topLosers:  [...positions].filter(p => p.pnlPct < 0).sort((a, b) => a.pnlPct - b.pnlPct).slice(0, 5),
+          chartDates, portfolioHistoryValues,
         };
-      }));
+        portfolioComputeCache.set(portCacheKey, { data: computed, expiresAt: Date.now() + PORTFOLIO_COMPUTE_TTL });
+      }
 
-      // Compute weights
-      const totalValue = positions.reduce((s, p) => s + p.marketValue, 0);
-      positions.forEach(p => { p.weight = totalValue > 0 ? (p.marketValue / totalValue) * 100 : 0; });
-
-      // Build portfolio daily value series (weighted sum of position histories)
-      const portfolioValues = buildPortfolioValueSeries(positions, totalValue, period);
-      const benchmarkData = await getMockPrice(benchmark);
+      // ── 2. BENCHMARK DATA — always fresh (cheap: one ticker) ───────────────
+      const benchmarkData    = await getMockPrice(benchmark);
       const benchmarkHistory = await generateHistory(benchmark, benchmarkData.price, 365);
-      const benchmarkValues = filterByPeriod(benchmarkHistory.map(h => h.close), period, benchmarkHistory.length);
+      const benchmarkValues  = filterByPeriod(benchmarkHistory.map(h => h.close), period, benchmarkHistory.length);
+      const normBench        = normalizeSeries(benchmarkValues, computed.portfolioValues[0] ?? 1);
+      const benchReturns     = dailyReturnsFromValues(benchmarkValues);
 
-      // Normalise benchmark to same start as portfolio
-      const normBench = normalizeSeries(benchmarkValues, portfolioValues[0]);
-
-      // Daily returns
-      const portReturns = dailyReturnsFromValues(portfolioValues);
-      const benchReturns = dailyReturnsFromValues(benchmarkValues);
-
-      // Period-specific returns
-      const ytdValues = buildPortfolioValueSeries(positions, totalValue, "YTD");
-      const oneMonthValues = buildPortfolioValueSeries(positions, totalValue, "1M");
-      const oneYearValues = buildPortfolioValueSeries(positions, totalValue, "1Y");
-      const ytdRet = ytdValues.length > 1 ? (ytdValues[ytdValues.length - 1] - ytdValues[0]) / ytdValues[0] : 0;
-      const oneMonthRet = oneMonthValues.length > 1 ? (oneMonthValues[oneMonthValues.length - 1] - oneMonthValues[0]) / oneMonthValues[0] : 0;
-      const oneYearRet = oneYearValues.length > 1 ? (oneYearValues[oneYearValues.length - 1] - oneYearValues[0]) / oneYearValues[0] : 0;
-
-      const cumValues = portfolioValues;
+      // ── 3. COMBINE ─────────────────────────────────────────────────────────
+      const ms = computed.metrics_stable;
       const metrics: RiskMetrics = {
-        totalValue,
-        totalCostBasis: positions.reduce((s, p) => s + p.costBasis, 0),
-        totalPnlAmount: positions.reduce((s, p) => s + p.pnlAmount, 0),
-        totalPnlPct: 0,
-        annualizedReturn: annualizedReturn(portReturns),
-        volatility: annualizedVolatility(portReturns),
-        sharpeRatio: sharpeRatio(portReturns),
-        sortinoRatio: sortinoRatio(portReturns),
-        maxDrawdown: maxDrawdown(cumValues),
-        beta: beta(portReturns, benchReturns),
-        trackingError: trackingError(portReturns, benchReturns),
-        informationRatio: informationRatio(portReturns, benchReturns),
-        calmarRatio: calmarRatio(portReturns, cumValues),
-        var95: historicalVaR(portReturns, totalValue),
-        expectedShortfall: expectedShortfall(portReturns, totalValue),
-        ytdReturn: ytdRet,
-        oneMonthReturn: oneMonthRet,
-        oneYearReturn: oneYearRet,
+        ...ms,
+        beta:              beta(computed.portReturns, benchReturns),
+        trackingError:     trackingError(computed.portReturns, benchReturns),
+        informationRatio:  informationRatio(computed.portReturns, benchReturns),
       };
-      metrics.totalPnlPct = metrics.totalCostBasis > 0 ? (metrics.totalPnlAmount / metrics.totalCostBasis) * 100 : 0;
 
-      // Allocations
-      const allocationByClass = groupAllocation(positions, p => p.assetClass);
-      const allocationBySector = groupAllocation(positions, p => p.sector);
-      const allocationByCurrency = groupAllocation(positions, p => p.currency);
-      const allocationByGeo = groupAllocation(positions, p => p.geography);
-
-      // Top 5 gainers by P&L %
-      const sorted = [...positions].sort((a, b) => b.pnlPct - a.pnlPct);
-      const topGainers = sorted.slice(0, 5);
-      // Top 5 losers — only positions with negative P&L, worst first
-      const topLosers = [...positions]
-        .filter(p => p.pnlPct < 0)
-        .sort((a, b) => a.pnlPct - b.pnlPct)
-        .slice(0, 5);
-
-      // Build chart history dates
-      const chartDates = buildDateSeries(period);
-      const portfolioHistorySliced = portfolioValues.slice(-chartDates.length);
-      const benchmarkNormSliced = normBench.slice(-chartDates.length);
-      const portfolioHistory = chartDates.map((date, i) => ({
+      const benchmarkNormSliced = normBench.slice(-computed.chartDates.length);
+      const portfolioHistory = computed.chartDates.map((date, i) => ({
         date,
-        value: portfolioHistorySliced[i] ?? portfolioValues[portfolioValues.length - 1],
-        benchmark: benchmarkNormSliced[i] ?? normBench[normBench.length - 1],
+        value:     computed.portfolioHistoryValues[i] ?? computed.portfolioValues[computed.portfolioValues.length - 1],
+        benchmark: benchmarkNormSliced[i]             ?? normBench[normBench.length - 1],
       }));
 
-      const summary: PortfolioSummary = {
+      res.json({
         portfolios: [],
-        positions,
+        positions: computed.positions,
         metrics,
-        allocationByClass,
-        allocationBySector,
-        allocationByCurrency,
-        allocationByGeo,
-        topGainers,
-        topLosers,
+        allocationByClass:    computed.allocationByClass,
+        allocationBySector:   computed.allocationBySector,
+        allocationByCurrency: computed.allocationByCurrency,
+        allocationByGeo:      computed.allocationByGeo,
+        topGainers:           computed.topGainers,
+        topLosers:            computed.topLosers,
         portfolioHistory,
-      };
-      res.json(summary);
+      } as PortfolioSummary);
+
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Internal server error" });
@@ -431,6 +457,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   /** DELETE /api/holdings/:id */
   app.delete("/api/holdings/:id", async (req, res) => {
     await storage.deleteHolding(parseInt(req.params.id));
+    invalidatePortfolioCache(); // holdings changed → invalidate all portfolio cache
     res.status(204).send();
   });
 
@@ -495,6 +522,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
         await storage.replacePortfolioHoldings(pName, pHoldings);
         totalImported += pHoldings.length;
       }
+      invalidatePortfolioCache(); // holdings changed
       res.json({ imported: totalImported, skipped });
     } catch (err) {
       console.error("[import error]", err);
