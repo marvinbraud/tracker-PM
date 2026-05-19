@@ -58,7 +58,8 @@ export function sortinoRatio(dailyReturns: number[]): number {
   const dailyRf = RISK_FREE_RATE / TRADING_DAYS;
   const downsideReturns = dailyReturns.filter(r => r < dailyRf);
   if (downsideReturns.length === 0) return ret > 0 ? Infinity : 0;
-  const downsideVariance = downsideReturns.reduce((acc, r) => acc + Math.pow(r - dailyRf, 2), 0) / downsideReturns.length;
+  // Denominator uses all observations (standard Sortino) — not just downside count
+  const downsideVariance = downsideReturns.reduce((acc, r) => acc + Math.pow(r - dailyRf, 2), 0) / dailyReturns.length;
   const downsideDev = Math.sqrt(downsideVariance * TRADING_DAYS);
   if (downsideDev === 0) return 0;
   return (ret - RISK_FREE_RATE) / downsideDev;

@@ -392,7 +392,15 @@ export function computeSummary(
   const dates = buildDateSeries(period);
   const n = dates.length;
   const portfolioValues = generatePath(totalCostBasis, totalValue, n, 0.009);
-  const benchmarkEnd   = totalCostBasis * Math.pow(1.10, n / 252);
+  // Benchmark: use realistic annual return per index (approximate, for synthetic path)
+  const BENCH_ANNUAL: Record<string, number> = {
+    "SPY": 0.115, "^GSPC": 0.115, "QQQ": 0.145, "^NDX": 0.145,
+    "^FCHI": 0.055, "^GDAXI": 0.085, "^N225": 0.075, "EWU": 0.065,
+    "IWDA.AS": 0.105, "URTH": 0.105, "EEM": 0.045, "IWM": 0.090,
+    "^FTSE": 0.060,
+  };
+  const benchAnnual = BENCH_ANNUAL[benchmark] ?? 0.10;
+  const benchmarkEnd   = totalCostBasis * Math.pow(1 + benchAnnual, n / 252);
   const benchmarkValues = generatePath(totalCostBasis, benchmarkEnd, n, 0.011);
 
   const pReturns = dailyReturnsFromValues(portfolioValues);
@@ -496,29 +504,29 @@ function computeMetrics(
   const es      = sorted5.slice(0, varIdx + 1).reduce((s, x) => s + x, 0)
                   / (varIdx + 1 || 1) * totalValue;
 
-  const n = values.length;
-  const ytdFrac  = ytdDays() / 252;
-  const oneMonFrac = 21 / 252;
+  const n   = values.length;
+  const ytd = ytdTradingDays(); // trading days since Jan 1 — aligns with values[] index
 
   return {
     totalValue,
     totalCostBasis,
     totalPnlAmount: totalValue - totalCostBasis,
     totalPnlPct: totalCostBasis > 0 ? ((totalValue - totalCostBasis) / totalCostBasis) * 100 : 0,
-    annualizedReturn: ret * 100,
-    volatility: vol * 100,
+    // ── Store as DECIMALS (e.g. 0.15 for 15%) — display layer does × 100 ──
+    annualizedReturn: ret,
+    volatility: vol,
     sharpeRatio: sharpe,
     sortinoRatio: sortino,
-    maxDrawdown: md * 100,
+    maxDrawdown: md,
     beta,
-    trackingError: te * 100,
+    trackingError: te,
     informationRatio: ir,
     calmarRatio: calmar,
     var95,
     expectedShortfall: es,
-    ytdReturn: n >= ytdDays() ? ((values[n - 1] / values[n - ytdDays()] - 1) * 100) : 0,
-    oneMonthReturn: n >= 21 ? ((values[n - 1] / values[n - 21] - 1) * 100) : 0,
-    oneYearReturn: n >= 252 ? ((values[n - 1] / values[n - 252] - 1) * 100) : 0,
+    ytdReturn:      n > ytd  ? (values[n - 1] / values[n - 1 - ytd]  - 1) : (values[n - 1] / values[0] - 1),
+    oneMonthReturn: n > 21   ? (values[n - 1] / values[n - 1 - 21]  - 1)  : (values[n - 1] / values[0] - 1),
+    oneYearReturn:  n > 252  ? (values[n - 1] / values[n - 1 - 252] - 1)  : (values[n - 1] / values[0] - 1),
   };
 }
 
@@ -527,7 +535,8 @@ function sortinoRatio(r: number[]): number {
   const dailyRf = RISK_FREE / TRADING_DAYS;
   const down = r.filter(x => x < dailyRf);
   if (down.length === 0) return ret > 0 ? 5 : 0;
-  const dv = down.reduce((s, x) => s + (x - dailyRf) ** 2, 0) / down.length;
+  // Denominator uses r.length (all observations), not just downside count — standard Sortino
+  const dv = down.reduce((s, x) => s + (x - dailyRf) ** 2, 0) / r.length;
   const dd = Math.sqrt(dv * TRADING_DAYS);
   return dd === 0 ? 0 : (ret - RISK_FREE) / dd;
 }
@@ -610,6 +619,20 @@ function ytdDays(): number {
   const now = new Date();
   const soy = new Date(now.getFullYear(), 0, 1);
   return Math.ceil((now.getTime() - soy.getTime()) / 86400000);
+}
+
+/** Count business days (Mon-Fri) from Jan 1 to today — used to index into values[] */
+function ytdTradingDays(): number {
+  const now = new Date();
+  const soy = new Date(now.getFullYear(), 0, 1);
+  let count = 0;
+  const d = new Date(soy);
+  while (d < now) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return Math.max(1, count);
 }
 
 // ─── CSV Parsing ─────────────────────────────────────────────────────────
