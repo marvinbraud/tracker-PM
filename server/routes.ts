@@ -14,6 +14,12 @@ import {
 const QUOTE_CACHE_TTL = 60_000; // 60 seconds
 const quoteCache = new Map<string, { data: any; ts: number }>();
 
+// ─── Indices YTD persistent cache (6 h TTL, stale-on-error) ─────────────────
+// When Render's cloud IPs are blocked by Yahoo Finance, we return the last
+// known-good payload instead of an empty object, so cards never go blank.
+const INDICES_YTD_TTL = 6 * 60 * 60 * 1000; // 6 hours
+let indicesYtdCache: { data: Record<string, { dates: string[]; closes: number[] } | null>; fetchedAt: number } | null = null;
+
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
 // ─── Portfolio computation cache (keyed by portfolio|period — NO benchmark) ──
@@ -69,6 +75,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
       { key: "HSI",   ticker: "^HSI"    },
     ] as const;
 
+    // Serve from cache if still fresh (6 h TTL)
+    const now = Date.now();
+    if (indicesYtdCache && now - indicesYtdCache.fetchedAt < INDICES_YTD_TTL) {
+      res.setHeader("X-Cache", "HIT");
+      return res.json(indicesYtdCache.data);
+    }
+
     try {
       const results = await Promise.allSettled(
         INDICES.map(async ({ key, ticker }) => {
@@ -100,10 +113,34 @@ export function registerRoutes(httpServer: Server, app: Express) {
       for (const r of results) {
         if (r.status === "fulfilled") out[r.value.key] = r.value.data;
       }
-      res.json(out);
+
+      // Only update the persistent cache when we got at least one real series
+      const gotData = Object.values(out).some(v => v != null && v.closes.length > 0);
+      if (gotData) {
+        indicesYtdCache = { data: out, fetchedAt: now };
+        res.setHeader("X-Cache", "MISS");
+        return res.json(out);
+      }
+
+      // Yahoo returned nothing useful — serve stale cache if available
+      if (indicesYtdCache) {
+        console.warn("[indices-ytd] Yahoo returned no data — serving stale cache");
+        res.setHeader("X-Cache", "STALE");
+        return res.json(indicesYtdCache.data);
+      }
+
+      // No cache at all — return empty but don't 500
+      res.setHeader("X-Cache", "EMPTY");
+      return res.json(out);
     } catch (err) {
       console.error("[indices-ytd]", err);
-      res.status(500).json({});
+      // On hard error, serve stale cache if we have it
+      if (indicesYtdCache) {
+        console.warn("[indices-ytd] Fetch error — serving stale cache");
+        res.setHeader("X-Cache", "STALE");
+        return res.json(indicesYtdCache.data);
+      }
+      return res.status(500).json({});
     }
   });
 
