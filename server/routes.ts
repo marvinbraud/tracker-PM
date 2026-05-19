@@ -677,6 +677,85 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return res.json({ quoteResponse: { result, error: null } });
   });
+
+  /**
+   * POST /api/portfolio-history
+   * Body: { holdings: [{ticker, quantity, currency, currentPrice, assetClass?}], period: string }
+   * Returns real portfolio value series built from Yahoo Finance historical closes.
+   * Used by the client to replace the synthetic GBM path with actual performance.
+   */
+  app.post("/api/portfolio-history", async (req, res) => {
+    type HoldingInput = {
+      ticker: string; quantity: number; currency: string;
+      currentPrice: number; assetClass?: string;
+    };
+    const { holdings, period } = req.body as { holdings: HoldingInput[]; period: string };
+
+    if (!Array.isArray(holdings) || holdings.length === 0) {
+      return res.json({ dates: [], values: [] });
+    }
+
+    // Warm up FX cache so getExchangeRate() has live rates
+    await getExchangeRateAsync("EUR", "USD").catch(() => {});
+
+    const histDays = periodToDays(period) + 15; // a bit of buffer for alignment
+
+    // Fetch history for all tickers in parallel, skip pure-cash lines
+    const enriched = await Promise.all(
+      holdings.map(async (h) => {
+        const isCash = (h.assetClass ?? "").toLowerCase() === "cash"
+                    || h.ticker.toLowerCase().startsWith("cash");
+        if (isCash) {
+          const hist = buildCashHistory(histDays);
+          return { ticker: h.ticker, quantity: h.quantity, currency: h.currency,
+                   priceCurrency: h.currency, history: hist };
+        }
+        const priceData = await getMockPrice(h.ticker);
+        const price     = h.currentPrice > 0 ? h.currentPrice : priceData.price;
+        const hist      = await generateHistory(h.ticker, price, histDays);
+        // Build a date→close map for O(1) lookup
+        const byDate: Record<string, number> = {};
+        for (const e of hist) byDate[e.date] = e.close;
+        return {
+          ticker: h.ticker, quantity: h.quantity, currency: h.currency,
+          priceCurrency: priceData.currency || h.currency,
+          history: hist, byDate,
+          lastClose: hist.length > 0 ? hist[hist.length - 1].close : price,
+        };
+      })
+    );
+
+    const dates = buildDateSeries(period);
+
+    // For each date, sum quantity × close × fxRate across all positions
+    // Use last known close (carry-forward) when a date is missing (holiday, etc.)
+    const values = dates.map(date => {
+      let total = 0;
+      for (const h of enriched) {
+        const byDate = (h as any).byDate as Record<string, number> | undefined;
+        let close: number;
+        if (byDate && byDate[date] != null) {
+          close = byDate[date];
+        } else if (byDate) {
+          // Carry forward: find most recent close before this date
+          const prior = Object.keys(byDate).filter(d => d <= date).sort().at(-1);
+          close = prior ? byDate[prior] : (h as any).lastClose ?? 1;
+        } else {
+          // Cash position: always 1 in its currency
+          close = 1;
+        }
+        const fxRate = getExchangeRate(
+          (h as any).priceCurrency || h.currency,
+          BASE_CURRENCY
+        );
+        total += h.quantity * close * fxRate;
+      }
+      return +total.toFixed(2);
+    });
+
+    res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+    return res.json({ dates, values });
+  });
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

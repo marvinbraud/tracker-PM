@@ -57,7 +57,7 @@ const localQueryFn: QueryFunction = async ({ queryKey }) => {
 
   const path = url.split("?")[0];
 
-  // ── /api/summary — portfolio computed locally, benchmark overlaid from server ──
+  // ── /api/summary — portfolio computed locally, real history overlaid from server ──
   if (path === "/api/summary") {
     const q         = parseQuery(url);
     const portfolio = q.get("portfolio") ?? "Global";
@@ -67,33 +67,91 @@ const localQueryFn: QueryFunction = async ({ queryKey }) => {
     // 1. Compute portfolio metrics synchronously from localStorage
     const summary = computeSummary(portfolio, period, benchmark);
 
-    // 2. Fetch REAL benchmark history from server (Yahoo Finance proxy)
-    try {
-      const benchRes = await fetch(
-        `/api/benchmark-history?ticker=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`
-      );
-      if (benchRes.ok) {
-        const { byDate }: { byDate: Record<string, number> } = await benchRes.json();
-        const dateKeys = Object.keys(byDate);
-        if (dateKeys.length >= 2) {
-          // Normalize: scale benchmark so it starts at the same value as the portfolio
-          const portfolioStart = summary.portfolioHistory[0]?.value ?? 1;
-          const firstPortDate  = summary.portfolioHistory[0]?.date ?? "";
-          // Find closest available benchmark close for the first portfolio date
-          const firstClose     = byDate[firstPortDate]
-            ?? byDate[dateKeys.find(d => d >= firstPortDate) ?? dateKeys[0]]
-            ?? Object.values(byDate)[0]
-            ?? 1;
-          const scale = firstClose > 0 ? portfolioStart / firstClose : 1;
+    // 2. Fetch REAL portfolio history from server (Yahoo Finance per-position closes)
+    //    and REAL benchmark history — run both in parallel
+    const holdings = getHoldings(portfolio);
+    const holdingPayload = holdings.map(h => ({
+      ticker:       h.ticker,
+      quantity:     h.quantity,
+      currency:     h.currency,
+      currentPrice: h.currentPrice ?? h.costPrice,
+      assetClass:   h.assetClass,
+    }));
 
-          summary.portfolioHistory = summary.portfolioHistory.map(h => ({
-            ...h,
-            benchmark: (byDate[h.date] ?? firstClose) * scale,
-          }));
+    const [portResult, benchResult] = await Promise.allSettled([
+      fetch("/api/portfolio-history", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ holdings: holdingPayload, period }),
+      }).then(r => r.ok ? r.json() : null),
+
+      fetch(
+        `/api/benchmark-history?ticker=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`
+      ).then(r => r.ok ? r.json() : null),
+    ]);
+
+    // 3. Overlay real portfolio values
+    const portData: { dates: string[]; values: number[] } | null =
+      portResult.status === "fulfilled" ? portResult.value : null;
+
+    if (portData && portData.values.length >= 2) {
+      const realByDate: Record<string, number> = {};
+      portData.dates.forEach((d, i) => { realByDate[d] = portData.values[i]; });
+
+      summary.portfolioHistory = summary.portfolioHistory.map(h => ({
+        ...h,
+        value: realByDate[h.date] ?? h.value,
+      }));
+
+      // Recompute period returns from real values
+      const vals = portData.values;
+      const n    = vals.length;
+      if (n >= 2) {
+        const end   = vals[n - 1];
+        const start = vals[0];
+        // ytdTradingDays approximation (client-side, no import needed)
+        const now  = new Date();
+        const soy  = new Date(now.getFullYear(), 0, 1);
+        let ytdTD  = 0;
+        const tmp  = new Date(soy);
+        while (tmp < now) { if (tmp.getDay() !== 0 && tmp.getDay() !== 6) ytdTD++; tmp.setDate(tmp.getDate() + 1); }
+        ytdTD = Math.max(1, ytdTD);
+
+        summary.metrics.ytdReturn      = n > ytdTD  ? vals[n - 1] / vals[n - 1 - ytdTD]  - 1 : end / start - 1;
+        summary.metrics.oneMonthReturn = n > 21     ? vals[n - 1] / vals[n - 1 - 21]  - 1     : end / start - 1;
+        summary.metrics.oneYearReturn  = n > 252    ? vals[n - 1] / vals[n - 1 - 252] - 1     : end / start - 1;
+
+        // Annualized from full series
+        const pReturns: number[] = [];
+        for (let i = 1; i < vals.length; i++) {
+          if (vals[i - 1] > 0) pReturns.push((vals[i] - vals[i - 1]) / vals[i - 1]);
+        }
+        if (pReturns.length > 0) {
+          const cum   = pReturns.reduce((acc, r) => acc * (1 + r), 1);
+          const years = pReturns.length / 252;
+          summary.metrics.annualizedReturn = Math.pow(cum, 1 / years) - 1;
         }
       }
-    } catch {
-      // Server unreachable or Yahoo blocked — keep synthetic benchmark silently
+    }
+
+    // 4. Overlay real benchmark
+    const benchData: { byDate: Record<string, number> } | null =
+      benchResult.status === "fulfilled" ? benchResult.value : null;
+
+    if (benchData && Object.keys(benchData.byDate).length >= 2) {
+      const portfolioStart = summary.portfolioHistory[0]?.value ?? 1;
+      const firstPortDate  = summary.portfolioHistory[0]?.date ?? "";
+      const dateKeys       = Object.keys(benchData.byDate).sort();
+      const firstClose     = benchData.byDate[firstPortDate]
+        ?? benchData.byDate[dateKeys.find(d => d >= firstPortDate) ?? dateKeys[0]]
+        ?? Object.values(benchData.byDate)[0]
+        ?? 1;
+      const scale = firstClose > 0 ? portfolioStart / firstClose : 1;
+
+      summary.portfolioHistory = summary.portfolioHistory.map(h => ({
+        ...h,
+        benchmark: (benchData.byDate[h.date] ?? firstClose) * scale,
+      }));
     }
 
     return summary;
