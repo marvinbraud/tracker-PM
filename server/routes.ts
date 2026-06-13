@@ -20,9 +20,10 @@ const quoteCache = new Map<string, { data: any; ts: number }>();
 const INDICES_YTD_TTL = 6 * 60 * 60 * 1000; // 6 hours
 let indicesYtdCache: { data: Record<string, { dates: string[]; closes: number[] } | null>; fetchedAt: number } | null = null;
 
-// ─── Macro FX live cache (30 min TTL, stale-on-error) ───────────────────────
-const MACRO_FX_TTL = 30 * 60 * 1000; // 30 min
-let macroFxCache: { data: Record<string, { price: number; change: number } | null>; fetchedAt: number } | null = null;
+// ─── Macro markets live cache (30 min TTL, stale-on-error) ──────────────────
+// Covers FX, volatility (VIX/MOVE), commodities and crypto — all from Yahoo.
+const MACRO_MKT_TTL = 30 * 60 * 1000; // 30 min
+let macroMktCache: { data: Record<string, { price: number; change: number } | null>; fetchedAt: number } | null = null;
 
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
@@ -184,29 +185,35 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
-  /** GET /api/macro-fx — live FX spot rates + DXY (server-side Yahoo proxy)
-   *  Response: { EURUSD: {price, change}, USDJPY: {...}, ..., fetchedAt }
+  /** GET /api/macro-markets — live FX, volatility, commodities & crypto (Yahoo proxy)
+   *  Response: { EURUSD: {price, change}, VIX: {...}, GOLD: {...}, ..., fetchedAt }
    *  30-min cache, serves stale data when Yahoo blocks the request.
    */
-  app.get("/api/macro-fx", async (_req, res) => {
-    const PAIRS = [
-      { key: "EURUSD", ticker: "EURUSD=X" },
-      { key: "USDJPY", ticker: "USDJPY=X" },
-      { key: "USDCNY", ticker: "USDCNY=X" },
-      { key: "GBPUSD", ticker: "GBPUSD=X" },
-      { key: "USDCHF", ticker: "USDCHF=X" },
-      { key: "DXY",    ticker: "DX-Y.NYB" },
+  app.get("/api/macro-markets", async (_req, res) => {
+    const TICKERS = [
+      // FX
+      { key: "EURUSD", ticker: "EURUSD=X" }, { key: "USDJPY", ticker: "USDJPY=X" },
+      { key: "USDCNY", ticker: "USDCNY=X" }, { key: "GBPUSD", ticker: "GBPUSD=X" },
+      { key: "USDCHF", ticker: "USDCHF=X" }, { key: "DXY",    ticker: "DX-Y.NYB" },
+      // Volatility
+      { key: "VIX",    ticker: "^VIX"     }, { key: "MOVE",   ticker: "^MOVE"    },
+      // Commodities
+      { key: "GOLD",   ticker: "GC=F"     }, { key: "SILVER", ticker: "SI=F"     },
+      { key: "WTI",    ticker: "CL=F"     }, { key: "BRENT",  ticker: "BZ=F"     },
+      { key: "COPPER", ticker: "HG=F"     }, { key: "NATGAS", ticker: "NG=F"     },
+      // Crypto
+      { key: "BTC",    ticker: "BTC-USD"  },
     ] as const;
 
     const now = Date.now();
-    if (macroFxCache && now - macroFxCache.fetchedAt < MACRO_FX_TTL) {
+    if (macroMktCache && now - macroMktCache.fetchedAt < MACRO_MKT_TTL) {
       res.setHeader("X-Cache", "HIT");
-      return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+      return res.json({ ...macroMktCache.data, fetchedAt: macroMktCache.fetchedAt });
     }
 
     try {
       const results = await Promise.allSettled(
-        PAIRS.map(async ({ key, ticker }) => {
+        TICKERS.map(async ({ key, ticker }) => {
           const data = await getMockPrice(ticker);
           return { key, value: data.price > 0 ? { price: data.price, change: data.dayChange } : null };
         })
@@ -219,23 +226,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
       const gotData = Object.values(out).some(v => v != null && v.price > 0);
       if (gotData) {
-        macroFxCache = { data: out, fetchedAt: now };
+        macroMktCache = { data: out, fetchedAt: now };
         res.setHeader("X-Cache", "MISS");
         return res.json({ ...out, fetchedAt: now });
       }
 
       // Yahoo gave nothing — serve stale cache if present
-      if (macroFxCache) {
+      if (macroMktCache) {
         res.setHeader("X-Cache", "STALE");
-        return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+        return res.json({ ...macroMktCache.data, fetchedAt: macroMktCache.fetchedAt });
       }
       res.setHeader("X-Cache", "EMPTY");
       return res.json({ ...out, fetchedAt: now });
     } catch (err) {
-      console.error("[macro-fx]", err);
-      if (macroFxCache) {
+      console.error("[macro-markets]", err);
+      if (macroMktCache) {
         res.setHeader("X-Cache", "STALE");
-        return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+        return res.json({ ...macroMktCache.data, fetchedAt: macroMktCache.fetchedAt });
       }
       return res.status(500).json({});
     }

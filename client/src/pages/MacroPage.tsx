@@ -57,11 +57,17 @@ function Delta({ v }: { v?: number }) {
   );
 }
 
-function SectionBar({ icon, title }: { icon?: React.ReactNode; title: string }) {
+function SectionBar({ icon, title, note }: { icon?: React.ReactNode; title: string; note?: string }) {
   return (
     <div className="bb-section-bar" style={{ marginBottom: "10px" }}>
       {icon && <span>{icon}</span>}
       {title}
+      {note && (
+        <span style={{ marginLeft: "auto", fontSize: "8px", fontWeight: 700, letterSpacing: "0.06em",
+          color: "var(--text-faint)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1px 5px" }}>
+          {note}
+        </span>
+      )}
     </div>
   );
 }
@@ -271,43 +277,63 @@ function fmtISO(iso: string): string {
   return `${d} ${MONTHS_EN[m - 1]} ${y}`;
 }
 
-// ─── Live FX hook (server proxy → Yahoo, with real June-2026 fallback) ──────
-interface FxQuote { price: number; change: number }
-type FxKey = "EURUSD" | "USDJPY" | "USDCNY" | "GBPUSD" | "USDCHF" | "DXY";
+// ─── Live market hook (server proxy → Yahoo) — FX, vol, commodities, crypto ──
+interface MktQuote { price: number; change: number }
+type MktKey =
+  | "EURUSD" | "USDJPY" | "USDCNY" | "GBPUSD" | "USDCHF" | "DXY"
+  | "VIX" | "MOVE"
+  | "GOLD" | "SILVER" | "WTI" | "BRENT" | "COPPER" | "NATGAS"
+  | "BTC";
 
-// Spot fallback used only when the live endpoint is unreachable (real values, June 2026)
-const FX_FALLBACK: Record<FxKey, FxQuote> = {
-  EURUSD: { price: 1.1573, change: -0.05 },
-  USDJPY: { price: 160.19, change:  0.17 },
-  USDCNY: { price: 6.762,  change: -0.19 },
-  GBPUSD: { price: 1.3407, change: -0.07 },
-  USDCHF: { price: 0.7964, change:  0.24 },
-  DXY:    { price: 98.4,   change:  0.10 },
+// Fallback used only when the live endpoint is unreachable.
+// Real values captured 13 Jun 2026 (Yahoo); the live feed overrides them.
+const MKT_FALLBACK: Record<MktKey, MktQuote> = {
+  EURUSD: { price: 1.1573, change: -0.05 }, USDJPY: { price: 160.19, change:  0.17 },
+  USDCNY: { price: 6.762,  change: -0.19 }, GBPUSD: { price: 1.3407, change: -0.07 },
+  USDCHF: { price: 0.7964, change:  0.24 }, DXY:    { price: 99.81,  change: -0.24 },
+  VIX:    { price: 17.68,  change: -9.05 }, MOVE:   { price: 78.0,   change:  0.0  },
+  GOLD:   { price: 4238.8, change: -2.24 }, SILVER: { price: 67.97,  change: -0.66 },
+  WTI:    { price: 84.88,  change: -7.03 }, BRENT:  { price: 87.33,  change: -7.34 },
+  COPPER: { price: 6.445,  change:  1.82 }, NATGAS: { price: 3.12,   change: -0.86 },
+  BTC:    { price: 63921,  change:  3.69 },
 };
 
-function useMacroFx() {
-  const { data } = useQuery<Record<string, FxQuote | null>>({
-    queryKey: ["/api/macro-fx"],
+function useMacroMarkets() {
+  const { data } = useQuery<Record<string, MktQuote | null>>({
+    queryKey: ["/api/macro-markets"],
     staleTime: 10 * 60 * 1000, // 10 min
     retry: 1,
   });
-  const fx: Record<FxKey, FxQuote> = { ...FX_FALLBACK };
+  const mkt: Record<MktKey, MktQuote> = { ...MKT_FALLBACK };
   let live = false;
   if (data) {
-    for (const k of Object.keys(FX_FALLBACK) as FxKey[]) {
+    for (const k of Object.keys(MKT_FALLBACK) as MktKey[]) {
       const v = data[k];
-      if (v && typeof v.price === "number" && v.price > 0) { fx[k] = v; live = true; }
+      if (v && typeof v.price === "number" && v.price > 0) { mkt[k] = v; live = true; }
     }
   }
-  return { fx, live };
+  return { mkt, live };
 }
 
 function frNum(n: number, digits: number): string {
   return n.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
+// US dollar price formatting (thousands separator, no decimals over 1000)
+function usd(n: number): string {
+  const digits = n >= 1000 ? 0 : n >= 100 ? 1 : 2;
+  return "$" + n.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+// VIX risk label/color by level
+function vixState(v: number): { sub: string; color: string } {
+  if (v >= 30) return { sub: "High fear",     color: "var(--negative)" };
+  if (v >= 20) return { sub: "Elevated",      color: "#f97316" };
+  if (v >= 15) return { sub: "Normal",        color: "var(--warning)" };
+  return            { sub: "Calm / low vol", color: "var(--positive)" };
+}
 
-// Macro indicators — FX cards are live; the rest are the latest reported prints.
-function buildMacroGroups(fx: Record<FxKey, FxQuote>): { label: string; icon: string; items: StatCard[] }[] {
+// Macro indicators — FX / vol / commodity cards are LIVE; macro prints are latest reported.
+function buildMacroGroups(mkt: Record<MktKey, MktQuote>): { label: string; icon: string; items: StatCard[] }[] {
+  const vix = vixState(mkt.VIX.price);
   return [
     {
       label: "United States",
@@ -317,7 +343,7 @@ function buildMacroGroups(fx: Record<FxKey, FxQuote>): { label: string; icon: st
         { label: "Fed Funds",  value: "3,50–3,75%", sub: "Effective 3,63% · held",    delta: 0     },
         { label: "GDP QoQ",    value: "+2,3%",  sub: "Q4 2025",                        delta: -0.2  },
         { label: "US 10Y",     value: "4,48%",  sub: "Treasury · 12 Jun",              delta: -1.5  },
-        { label: "DXY",        value: frNum(fx.DXY.price, 1),    sub: "Dollar Index · live", delta: fx.DXY.change    },
+        { label: "DXY",        value: frNum(mkt.DXY.price, 1),    sub: "Dollar Index · live", delta: mkt.DXY.change    },
       ],
     },
     {
@@ -325,54 +351,54 @@ function buildMacroGroups(fx: Record<FxKey, FxQuote>): { label: string; icon: st
       icon: "🇪🇺",
       items: [
         { label: "CPI HICP",   value: "2,3%",   sub: "Euro Zone · latest"             },
-        { label: "EUR / USD",  value: frNum(fx.EURUSD.price, 4), sub: "Spot · live",   delta: fx.EURUSD.change  },
-        { label: "GBP / USD",  value: frNum(fx.GBPUSD.price, 4), sub: "Spot · live",   delta: fx.GBPUSD.change  },
-        { label: "USD / CHF",  value: frNum(fx.USDCHF.price, 4), sub: "Spot · live",   delta: fx.USDCHF.change  },
+        { label: "EUR / USD",  value: frNum(mkt.EURUSD.price, 4), sub: "Spot · live",   delta: mkt.EURUSD.change  },
+        { label: "GBP / USD",  value: frNum(mkt.GBPUSD.price, 4), sub: "Spot · live",   delta: mkt.GBPUSD.change  },
+        { label: "USD / CHF",  value: frNum(mkt.USDCHF.price, 4), sub: "Spot · live",   delta: mkt.USDCHF.change  },
       ],
     },
     {
       label: "Asia & Japan",
       icon: "🇯🇵",
       items: [
-        { label: "USD / JPY",  value: frNum(fx.USDJPY.price, 2), sub: "Spot · live",   delta: fx.USDJPY.change  },
+        { label: "USD / JPY",  value: frNum(mkt.USDJPY.price, 2), sub: "Spot · live",   delta: mkt.USDJPY.change  },
         { label: "CPI Japon",  value: "2,2%",   sub: "latest · BoJ",                  delta: +0.1  },
         { label: "GDP Chine",  value: "+4,5%",  sub: "Q4 2025 · NBS"                 },
-        { label: "USD / CNY",  value: frNum(fx.USDCNY.price, 3), sub: "Spot · live",   delta: fx.USDCNY.change  },
+        { label: "USD / CNY",  value: frNum(mkt.USDCNY.price, 3), sub: "Spot · live",   delta: mkt.USDCNY.change  },
       ],
     },
     {
       label: "Sentiment & Risk",
       icon: "📊",
       items: [
-        { label: "VIX",        value: "28,4",   sub: "Fear elevated",                  delta: +38.0, color: "var(--negative)"  },
+        { label: "VIX",        value: frNum(mkt.VIX.price, 2),  sub: vix.sub + " · live", delta: mkt.VIX.change, color: vix.color },
+        { label: "MOVE Index", value: frNum(mkt.MOVE.price, 1), sub: "Bond vol · live",   delta: mkt.MOVE.change },
         { label: "PMI Mfg",    value: "51,2",   sub: "latest · S&P Global",           delta: +0.8  },
         { label: "PMI Svcs",   value: "53,0",   sub: "Expanding",                     delta: +0.3  },
-        { label: "MOVE Index", value: "96,4",   sub: "Bond volatility",               delta: +8.2  },
       ],
     },
     {
-      label: "Commodities",
+      label: "Commodities & Crypto",
       icon: "🛢️",
       items: [
-        { label: "WTI Crude",  value: "$100,6", sub: "↑ ME conflict shock",            delta: +35.0, color: "var(--negative)"  },
-        { label: "Brent",      value: "$106,2", sub: "/bbl · spot",                   delta: +33.1, color: "var(--negative)"  },
-        { label: "Gold",       value: "$3 012", sub: "Safe haven",                    delta: +12.4  },
-        { label: "Silver",     value: "$33,8",  sub: "/oz · spot",                   delta: +8.2   },
+        { label: "WTI Crude",  value: usd(mkt.WTI.price),    sub: "/bbl · live",  delta: mkt.WTI.change    },
+        { label: "Brent",      value: usd(mkt.BRENT.price),  sub: "/bbl · live",  delta: mkt.BRENT.change  },
+        { label: "Gold",       value: usd(mkt.GOLD.price),   sub: "/oz · live",   delta: mkt.GOLD.change   },
+        { label: "Silver",     value: usd(mkt.SILVER.price), sub: "/oz · live",   delta: mkt.SILVER.change },
       ],
     },
   ];
 }
 
 function MacroStatsSection() {
-  const { fx, live } = useMacroFx();
-  const MACRO_GROUPS = buildMacroGroups(fx);
+  const { mkt, live } = useMacroMarkets();
+  const MACRO_GROUPS = buildMacroGroups(mkt);
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionBar icon={<Activity size={12} />} title="KEY MACRO INDICATORS" />
         <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "10px",
           color: live ? "var(--positive)" : "var(--text-faint)" }}>
-          {live ? "● FX LIVE" : "○ FX CACHED"}
+          {live ? "● LIVE" : "○ CACHED"}
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -425,8 +451,8 @@ const CENTRAL_BANKS: CentralBank[] = [
     ],
   },
   {
-    name: "BCE", fullName: "European Central Bank", rate: "2.00%", trend: "hold", color: "#f59e0b",
-    nextExpected: "Hold / data-dependent", inflation: "2.3%", gdp: "+0.8%",
+    name: "BCE", fullName: "European Central Bank", rate: "2.25%", trend: "hike", color: "#f59e0b",
+    nextExpected: "Hold after June +25bp hike", inflation: "2.3%", gdp: "+0.8%",
     meetings: [
       { date: "2026-02-05", label: "5 Feb" }, { date: "2026-03-19", label: "19 Mar" },
       { date: "2026-04-30", label: "30 Apr" }, { date: "2026-06-11", label: "11 Jun" },
@@ -588,7 +614,7 @@ const YIELD_DATA = [
 function YieldCurveSection() {
   return (
     <div>
-      <SectionBar icon={<TrendingUp size={12} />} title="YIELD CURVE — US TREASURIES" />
+      <SectionBar icon={<TrendingUp size={12} />} title="YIELD CURVE — US TREASURIES" note="SNAPSHOT · 12 JUN" />
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
         <div style={s.card}>
           <div style={{ ...s.label, marginBottom: "8px" }}>US YIELD CURVE (12 JUN 2026)</div>
@@ -664,7 +690,7 @@ const BIG_MAC_DATA = [
 function BigMacSection() {
   return (
     <div>
-      <SectionBar icon={<DollarSign size={12} />} title="BIG MAC INDEX — PURCHASING POWER PARITY (PPP)" />
+      <SectionBar icon={<DollarSign size={12} />} title="BIG MAC INDEX — PURCHASING POWER PARITY (PPP)" note="STATIC · ECONOMIST 2025" />
       <div style={s.card}>
         <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "10px", lineHeight: 1.7 }}>
           The <strong style={{ color: "var(--primary)" }}>Big Mac Index</strong> (The Economist, 1986) measures currency under/overvaluation via the cost of a Big Mac. Base: US price = <strong style={{ color: "var(--accent)" }}>$5.79</strong>.
@@ -697,17 +723,6 @@ function BigMacSection() {
 
 // ─── 6. COMMODITÉS & RISQUES ─────────────────────────────────────────────────
 
-const COMMODITIES = [
-  { name: "WTI Crude",    value: "$100,6", chg: +40.8, unit: "/bbl",   icon: "🛢️" },
-  { name: "Brent",        value: "$106,2", chg: +38.6, unit: "/bbl",   icon: "🛢️" },
-  { name: "Gold",         value: "$3 012", chg: +12.4, unit: "/oz",    icon: "🥇" },
-  { name: "Silver",       value: "$33,8",  chg: +8.2,  unit: "/oz",    icon: "🥈" },
-  { name: "Natural Gas",  value: "$4,12",  chg: +22.1, unit: "/MMBtu", icon: "🔥" },
-  { name: "Wheat",        value: "$5,62",  chg: +4.3,  unit: "/bu",    icon: "🌾" },
-  { name: "Copper",       value: "$4,24",  chg: +6.7,  unit: "/lb",    icon: "🔶" },
-  { name: "Bitcoin",      value: "$84 120", chg: -18.4, unit: "/BTC",  icon: "₿"  },
-];
-
 const GEO_RISKS = [
   { region: "Middle East",    risk: "CRITICAL", score: 9.2, color: "var(--negative)", detail: "US-Israel/Iran conflict · Shipping disrupted"    },
   { region: "Ukraine/Russie",risk: "HIGH",     score: 7.1, color: "#f97316",         detail: "Prolonged war · Active sanctions"                },
@@ -717,28 +732,47 @@ const GEO_RISKS = [
 ];
 
 function CommoditiesSection() {
+  const { mkt, live } = useMacroMarkets();
+  const items: { name: string; key: MktKey; unit: string; icon: string }[] = [
+    { name: "Gold",        key: "GOLD",   unit: "/oz",    icon: "🥇" },
+    { name: "Silver",      key: "SILVER", unit: "/oz",    icon: "🥈" },
+    { name: "WTI Crude",   key: "WTI",    unit: "/bbl",   icon: "🛢️" },
+    { name: "Brent",       key: "BRENT",  unit: "/bbl",   icon: "🛢️" },
+    { name: "Natural Gas", key: "NATGAS", unit: "/MMBtu", icon: "🔥" },
+    { name: "Copper",      key: "COPPER", unit: "/lb",    icon: "🔶" },
+    { name: "Bitcoin",     key: "BTC",    unit: "/BTC",   icon: "₿"  },
+  ];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
       <div>
-        <SectionBar title="COMMODITIES & CRYPTOS" />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <SectionBar title="COMMODITIES & CRYPTOS" />
+          <span style={{ fontSize: "9px", fontWeight: 700, marginBottom: "10px",
+            color: live ? "var(--positive)" : "var(--text-faint)" }}>
+            {live ? "● LIVE" : "○ CACHED"}
+          </span>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px" }}>
-          {COMMODITIES.map(c => (
-            <div key={c.name} style={s.card}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{c.icon} {c.name}</span>
-                <span style={{ fontSize: "8px", color: "var(--text-faint)" }}>{c.unit}</span>
+          {items.map(c => {
+            const q = mkt[c.key];
+            return (
+              <div key={c.name} style={s.card}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{c.icon} {c.name}</span>
+                  <span style={{ fontSize: "8px", color: "var(--text-faint)" }}>{c.unit}</span>
+                </div>
+                <div style={{ fontSize: "12px", fontWeight: 700, fontVariantNumeric: "tabular-nums", marginTop: "2px" }}>{usd(q.price)}</div>
+                <div style={{ fontSize: "9px", color: q.change >= 0 ? "var(--positive)" : "var(--negative)", display: "flex", alignItems: "center", gap: "2px" }}>
+                  {q.change >= 0 ? <TrendingUp size={8} /> : <TrendingDown size={8} />}
+                  1D {q.change > 0 ? "+" : ""}{q.change.toFixed(2)}%
+                </div>
               </div>
-              <div style={{ fontSize: "12px", fontWeight: 700, fontVariantNumeric: "tabular-nums", marginTop: "2px" }}>{c.value}</div>
-              <div style={{ fontSize: "9px", color: c.chg >= 0 ? "var(--positive)" : "var(--negative)", display: "flex", alignItems: "center", gap: "2px" }}>
-                {c.chg >= 0 ? <TrendingUp size={8} /> : <TrendingDown size={8} />}
-                YTD {c.chg > 0 ? "+" : ""}{c.chg.toFixed(1)}%
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       <div>
-        <SectionBar icon={<AlertTriangle size={12} />} title="GEOPOLITICAL RISKS" />
+        <SectionBar icon={<AlertTriangle size={12} />} title="GEOPOLITICAL RISKS" note="STATIC" />
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
           {GEO_RISKS.map(r => (
             <div key={r.region} style={{ ...s.card, borderLeft: `3px solid ${r.color}` }}>
@@ -819,7 +853,7 @@ function FearGreedMeter({ value }: { value: number }) {
 function PizzaAndFearSection() {
   return (
     <div>
-      <SectionBar icon={<Pizza size={12} />} title="ALTERNATIVE SENTIMENT — PENTAGON PIZZA + FEAR & GREED" />
+      <SectionBar icon={<Pizza size={12} />} title="ALTERNATIVE SENTIMENT — PENTAGON PIZZA + FEAR & GREED" note="STATIC · ILLUSTRATIVE" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
 
         {/* Pentagon Pizza */}
@@ -930,7 +964,7 @@ function BuffettSection() {
 
   return (
     <div>
-      <SectionBar icon={<BarChart2 size={12} />} title="BUFFETT INDICATOR — MARKET CAP / GDP" />
+      <SectionBar icon={<BarChart2 size={12} />} title="BUFFETT INDICATOR — MARKET CAP / GDP" note="STATIC" />
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
         {/* Chart */}
         <div style={s.card}>
@@ -1009,6 +1043,8 @@ export default function MacroPage() {
   });
 
   const todayLabel = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  const { mkt, live } = useMacroMarkets();
+  const vix = vixState(mkt.VIX.price);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -1017,14 +1053,16 @@ export default function MacroPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "12px", borderBottom: "1px solid var(--divider)" }}>
         <div>
           <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--primary)", letterSpacing: "0.04em" }}>Atlas Macro</div>
-          <div style={{ fontSize: "10px", color: "var(--text-faint)", marginTop: "1px" }}>Global macroeconomic indicators · Live FX · {todayLabel}</div>
+          <div style={{ fontSize: "10px", color: "var(--text-faint)", marginTop: "1px" }}>Global macroeconomic indicators · Live market data · {todayLabel}</div>
         </div>
-        <div style={{ display: "flex", gap: "12px", fontSize: "10px", color: "var(--text-muted)" }}>
-          <span>🔴 Active Middle East Conflict</span>
+        <div style={{ display: "flex", gap: "12px", fontSize: "10px", color: "var(--text-muted)", alignItems: "center" }}>
+          <span>VIX <strong style={{ color: vix.color }}>{frNum(mkt.VIX.price, 1)} — {vix.sub}</strong></span>
           <span style={{ color: "var(--divider)" }}>|</span>
-          <span>Fear & Greed : <strong style={{ color: "var(--negative)" }}>22 — Extreme Fear</strong></span>
+          <span>DXY <strong style={{ color: "var(--text)" }}>{frNum(mkt.DXY.price, 1)}</strong></span>
           <span style={{ color: "var(--divider)" }}>|</span>
-          <span>Buffett Indicator US : <strong style={{ color: "#f97316" }}>165%</strong></span>
+          <span>Gold <strong style={{ color: "var(--text)" }}>{usd(mkt.GOLD.price)}</strong></span>
+          <span style={{ color: "var(--divider)" }}>|</span>
+          <span style={{ color: live ? "var(--positive)" : "var(--text-faint)", fontWeight: 700 }}>{live ? "● LIVE" : "○ CACHED"}</span>
         </div>
       </div>
 
