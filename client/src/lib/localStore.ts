@@ -487,12 +487,13 @@ function maxDrawdown(values: number[]): number {
 function betaFn(p: number[], b: number[]): number {
   const n = Math.min(p.length, b.length);
   if (n < 2) return 1;
-  const pm = p.slice(-n).reduce((a, x) => a + x, 0) / n;
-  const bm = b.slice(-n).reduce((a, x) => a + x, 0) / n;
+  const ps = p.slice(-n), bs = b.slice(-n);
+  const pm = ps.reduce((a, x) => a + x, 0) / n;
+  const bm = bs.reduce((a, x) => a + x, 0) / n;
   let cov = 0, bVar = 0;
   for (let i = 0; i < n; i++) {
-    cov  += (p[i] - pm) * (b[i] - bm);
-    bVar += (b[i] - bm) ** 2;
+    cov  += (ps[i] - pm) * (bs[i] - bm);
+    bVar += (bs[i] - bm) ** 2;
   }
   return bVar === 0 ? 1 : cov / bVar;
 }

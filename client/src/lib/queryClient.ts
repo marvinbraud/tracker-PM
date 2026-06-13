@@ -91,8 +91,11 @@ const localQueryFn: QueryFunction = async ({ queryKey }) => {
     ]);
 
     // 3. Overlay real portfolio values
-    const portData: { dates: string[]; values: number[] } | null =
-      portResult.status === "fulfilled" ? portResult.value : null;
+    const portData: {
+      dates: string[];
+      values: number[];
+      metrics?: Record<string, number | null> | null;
+    } | null = portResult.status === "fulfilled" ? portResult.value : null;
 
     if (portData && portData.values.length >= 2) {
       const realByDate: Record<string, number> = {};
@@ -103,33 +106,13 @@ const localQueryFn: QueryFunction = async ({ queryKey }) => {
         value: realByDate[h.date] ?? h.value,
       }));
 
-      // Recompute period returns from real values
-      const vals = portData.values;
-      const n    = vals.length;
-      if (n >= 2) {
-        const end   = vals[n - 1];
-        const start = vals[0];
-        // ytdTradingDays approximation (client-side, no import needed)
-        const now  = new Date();
-        const soy  = new Date(now.getFullYear(), 0, 1);
-        let ytdTD  = 0;
-        const tmp  = new Date(soy);
-        while (tmp < now) { if (tmp.getDay() !== 0 && tmp.getDay() !== 6) ytdTD++; tmp.setDate(tmp.getDate() + 1); }
-        ytdTD = Math.max(1, ytdTD);
-
-        summary.metrics.ytdReturn      = n > ytdTD  ? vals[n - 1] / vals[n - 1 - ytdTD]  - 1 : end / start - 1;
-        summary.metrics.oneMonthReturn = n > 21     ? vals[n - 1] / vals[n - 1 - 21]  - 1     : end / start - 1;
-        summary.metrics.oneYearReturn  = n > 252    ? vals[n - 1] / vals[n - 1 - 252] - 1     : end / start - 1;
-
-        // Annualized from full series
-        const pReturns: number[] = [];
-        for (let i = 1; i < vals.length; i++) {
-          if (vals[i - 1] > 0) pReturns.push((vals[i] - vals[i - 1]) / vals[i - 1]);
-        }
-        if (pReturns.length > 0) {
-          const cum   = pReturns.reduce((acc, r) => acc * (1 + r), 1);
-          const years = pReturns.length / 252;
-          summary.metrics.annualizedReturn = Math.pow(cum, 1 / years) - 1;
+      // Apply server-computed metrics: vol, Sharpe, Sortino, MaxDD, VaR, period returns…
+      // Null values are skipped — synthetic estimates stay for windows we lack data for.
+      if (portData.metrics) {
+        for (const [key, val] of Object.entries(portData.metrics)) {
+          if (val !== null) {
+            (summary.metrics as Record<string, number>)[key] = val;
+          }
         }
       }
     }

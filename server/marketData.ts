@@ -153,12 +153,16 @@ export async function generateHistory(ticker: string, currentPrice: number, days
     : ticker;
 
   if (resolved) {
-    const cached = historyCache.get(resolved);
+    // Include range bucket in cache key so 1Y and 3Y requests don't collide
+    const rangeBucket = days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo"
+                      : days <= 380 ? "1y" : days <= 760 ? "2y" : "5y";
+    const cacheKey = `${resolved}|${rangeBucket}`;
+    const cached = historyCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.data;
 
     const history = await fetchYahooHistory(resolved, days);
     if (history && history.length > 5) {
-      historyCache.set(resolved, { data: history, expiresAt: Date.now() + HISTORY_TTL_MS });
+      historyCache.set(cacheKey, { data: history, expiresAt: Date.now() + HISTORY_TTL_MS });
       return history;
     }
     if (cached) return cached.data;

@@ -727,22 +727,33 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     const dates = buildDateSeries(period);
 
-    // For each date, sum quantity × close × fxRate across all positions
-    // Use last known close (carry-forward) when a date is missing (holiday, etc.)
+    // Pre-sort each position's date keys once (O(k log k) instead of O(k) per date)
+    const enrichedWithSortedDates = enriched.map(h => {
+      const byDate = (h as any).byDate as Record<string, number> | undefined;
+      const sortedDates = byDate ? Object.keys(byDate).sort() : [];
+      return { ...h, _sortedDates: sortedDates };
+    });
+
+    // For each date, sum quantity × close × fxRate across all positions.
+    // Carry forward for holidays; carry backward (use first known close) for dates
+    // before history — avoids the distortion of using current price as a "past" price.
     const values = dates.map(date => {
       let total = 0;
-      for (const h of enriched) {
+      for (const h of enrichedWithSortedDates) {
         const byDate = (h as any).byDate as Record<string, number> | undefined;
         let close: number;
         if (byDate && byDate[date] != null) {
           close = byDate[date];
         } else if (byDate) {
-          // Carry forward: find most recent close before this date
-          const prior = Object.keys(byDate).filter(d => d <= date).sort().at(-1);
-          close = prior ? byDate[prior] : (h as any).lastClose ?? 1;
+          const sd = (h as any)._sortedDates as string[];
+          const prior = sd.filter(d => d <= date).at(-1);
+          if (prior) {
+            close = byDate[prior];                      // carry forward (holiday / weekend)
+          } else {
+            close = sd.length > 0 ? byDate[sd[0]] : 1; // carry backward from first known close
+          }
         } else {
-          // Cash position: always 1 in its currency
-          close = 1;
+          close = 1; // cash
         }
         const fxRate = getExchangeRate(
           (h as any).priceCurrency || h.currency,
@@ -753,8 +764,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return +total.toFixed(2);
     });
 
+    // Compute real risk/return metrics from the reconstructed value series
+    const n = values.length;
+    const dailyRets = dailyReturnsFromValues(values);
+    const ytdTD = ytdTradingDays();
+    let metrics: Record<string, number | null> | null = null;
+    if (dailyRets.length >= 2) {
+      metrics = {
+        annualizedReturn:  annualizedReturn(dailyRets),
+        volatility:        annualizedVolatility(dailyRets),
+        sharpeRatio:       sharpeRatio(dailyRets),
+        sortinoRatio:      sortinoRatio(dailyRets),
+        maxDrawdown:       maxDrawdown(values),
+        calmarRatio:       calmarRatio(dailyRets, values),
+        var95:             historicalVaR(dailyRets, values[n - 1]),
+        expectedShortfall: expectedShortfall(dailyRets, values[n - 1]),
+        // Period returns — null when we don't have enough history for that window
+        ytdReturn:         n > ytdTD ? values[n - 1] / values[n - 1 - ytdTD] - 1 : null,
+        oneMonthReturn:    n > 21    ? values[n - 1] / values[n - 1 - 21]    - 1 : null,
+        oneYearReturn:     n > 252   ? values[n - 1] / values[n - 1 - 252]   - 1 : null,
+      };
+    }
+
     res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
-    return res.json({ dates, values });
+    return res.json({ dates, values, metrics });
   });
 }
 
@@ -839,6 +872,19 @@ function ytdDays(): number {
   const now = new Date();
   const startOfYear = new Date(now.getFullYear(), 0, 1);
   return Math.max(1, Math.ceil((now.getTime() - startOfYear.getTime()) / (1000 * 86400)));
+}
+
+function ytdTradingDays(): number {
+  const now = new Date();
+  const soy = new Date(now.getFullYear(), 0, 1);
+  let count = 0;
+  const d = new Date(soy);
+  while (d < now) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return Math.max(1, count);
 }
 
 function buildDateSeries(period: string): string[] {
