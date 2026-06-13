@@ -258,64 +258,123 @@ function IndicesSection() {
 // Les taux directeurs (Fed, BCE, BoJ) sont retirés → gérés dans "Banques Centrales"
 // Fear & Greed retiré → fusionné avec Pentagon Pizza
 
-const MACRO_GROUPS: { label: string; icon: string; items: StatCard[] }[] = [
-  {
-    label: "United States",
-    icon: "🇺🇸",
-    items: [
-      { label: "CPI YoY",    value: "2,4%",   sub: "Feb 2026 · BLS",                 delta: 0     },
-      { label: "Chômage",    value: "4,4%",   sub: "Feb 2026 · BLS",                 delta: 0.1   },
-      { label: "NFP",        value: "−92k",   sub: "Feb 2026 · 3rd neg. month",      delta: -4.0  },
-      { label: "GDP QoQ",    value: "+2,3%",  sub: "Q4 2025",                        delta: -0.2  },
-      { label: "DXY",        value: "103,6",  sub: "Dollar Index",                   delta: +1.2  },
-    ],
-  },
-  {
-    label: "Euro Zone",
-    icon: "🇪🇺",
-    items: [
-      { label: "CPI HICP",   value: "2,3%",   sub: "Euro Zone · Feb 2026"            },
-      { label: "EUR / USD",  value: "1,087",  sub: "Spot · forex",                  delta: -0.4  },
-      { label: "GDP QoQ",    value: "+0,8%",  sub: "Q4 2025 · Eurostat"             },
-      { label: "Chômage",    value: "6,1%",   sub: "Jan 2026 · Eurostat"            },
-    ],
-  },
-  {
-    label: "Asia & Japan",
-    icon: "🇯🇵",
-    items: [
-      { label: "USD / JPY",  value: "147,8",  sub: "Spot · forex",                  delta: -0.2  },
-      { label: "CPI Japon",  value: "2,2%",   sub: "Jan 2026 · BoJ",               delta: +0.1  },
-      { label: "GDP Chine",  value: "+4,5%",  sub: "Q4 2025 · NBS"                 },
-      { label: "USD / CNY",  value: "7,24",   sub: "Spot · offshore",              delta: +0.3  },
-    ],
-  },
-  {
-    label: "Sentiment & Risk",
-    icon: "📊",
-    items: [
-      { label: "VIX",        value: "28,4",   sub: "Fear elevated",                  delta: +38.0, color: "var(--negative)"  },
-      { label: "PMI Mfg",    value: "51,2",   sub: "Feb 2026 · S&P Global",         delta: +0.8  },
-      { label: "PMI Svcs",   value: "53,0",   sub: "Feb 2026 · Expanding",          delta: +0.3  },
-      { label: "MOVE Index", value: "96,4",   sub: "Bond volatility",               delta: +8.2  },
-    ],
-  },
-  {
-    label: "Commodities",
-    icon: "🛢️",
-    items: [
-      { label: "WTI Crude",  value: "$100,6", sub: "↑ ME conflict shock",            delta: +35.0, color: "var(--negative)"  },
-      { label: "Brent",      value: "$106,2", sub: "/bbl · spot",                   delta: +33.1, color: "var(--negative)"  },
-      { label: "Gold",       value: "$3 012", sub: "Safe haven",                    delta: +12.4  },
-      { label: "Silver",     value: "$33,8",  sub: "/oz · spot",                   delta: +8.2   },
-    ],
-  },
-];
+// ─── Date helpers — the page always reads the real current date ─────────────
+const MONTHS_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function todayISO(): string {
+  // Local date as yyyy-mm-dd (avoids UTC off-by-one near midnight)
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fmtISO(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} ${MONTHS_EN[m - 1]} ${y}`;
+}
+
+// ─── Live FX hook (server proxy → Yahoo, with real June-2026 fallback) ──────
+interface FxQuote { price: number; change: number }
+type FxKey = "EURUSD" | "USDJPY" | "USDCNY" | "GBPUSD" | "USDCHF" | "DXY";
+
+// Spot fallback used only when the live endpoint is unreachable (real values, June 2026)
+const FX_FALLBACK: Record<FxKey, FxQuote> = {
+  EURUSD: { price: 1.1573, change: -0.05 },
+  USDJPY: { price: 160.19, change:  0.17 },
+  USDCNY: { price: 6.762,  change: -0.19 },
+  GBPUSD: { price: 1.3407, change: -0.07 },
+  USDCHF: { price: 0.7964, change:  0.24 },
+  DXY:    { price: 98.4,   change:  0.10 },
+};
+
+function useMacroFx() {
+  const { data } = useQuery<Record<string, FxQuote | null>>({
+    queryKey: ["/api/macro-fx"],
+    staleTime: 10 * 60 * 1000, // 10 min
+    retry: 1,
+  });
+  const fx: Record<FxKey, FxQuote> = { ...FX_FALLBACK };
+  let live = false;
+  if (data) {
+    for (const k of Object.keys(FX_FALLBACK) as FxKey[]) {
+      const v = data[k];
+      if (v && typeof v.price === "number" && v.price > 0) { fx[k] = v; live = true; }
+    }
+  }
+  return { fx, live };
+}
+
+function frNum(n: number, digits: number): string {
+  return n.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+// Macro indicators — FX cards are live; the rest are the latest reported prints.
+function buildMacroGroups(fx: Record<FxKey, FxQuote>): { label: string; icon: string; items: StatCard[] }[] {
+  return [
+    {
+      label: "United States",
+      icon: "🇺🇸",
+      items: [
+        { label: "CPI YoY",    value: "4,2%",   sub: "May 2026 · BLS",                 delta: +0.4  },
+        { label: "Fed Funds",  value: "3,50–3,75%", sub: "Effective 3,63% · held",    delta: 0     },
+        { label: "GDP QoQ",    value: "+2,3%",  sub: "Q4 2025",                        delta: -0.2  },
+        { label: "US 10Y",     value: "4,48%",  sub: "Treasury · 12 Jun",              delta: -1.5  },
+        { label: "DXY",        value: frNum(fx.DXY.price, 1),    sub: "Dollar Index · live", delta: fx.DXY.change    },
+      ],
+    },
+    {
+      label: "Euro Zone",
+      icon: "🇪🇺",
+      items: [
+        { label: "CPI HICP",   value: "2,3%",   sub: "Euro Zone · latest"             },
+        { label: "EUR / USD",  value: frNum(fx.EURUSD.price, 4), sub: "Spot · live",   delta: fx.EURUSD.change  },
+        { label: "GBP / USD",  value: frNum(fx.GBPUSD.price, 4), sub: "Spot · live",   delta: fx.GBPUSD.change  },
+        { label: "USD / CHF",  value: frNum(fx.USDCHF.price, 4), sub: "Spot · live",   delta: fx.USDCHF.change  },
+      ],
+    },
+    {
+      label: "Asia & Japan",
+      icon: "🇯🇵",
+      items: [
+        { label: "USD / JPY",  value: frNum(fx.USDJPY.price, 2), sub: "Spot · live",   delta: fx.USDJPY.change  },
+        { label: "CPI Japon",  value: "2,2%",   sub: "latest · BoJ",                  delta: +0.1  },
+        { label: "GDP Chine",  value: "+4,5%",  sub: "Q4 2025 · NBS"                 },
+        { label: "USD / CNY",  value: frNum(fx.USDCNY.price, 3), sub: "Spot · live",   delta: fx.USDCNY.change  },
+      ],
+    },
+    {
+      label: "Sentiment & Risk",
+      icon: "📊",
+      items: [
+        { label: "VIX",        value: "28,4",   sub: "Fear elevated",                  delta: +38.0, color: "var(--negative)"  },
+        { label: "PMI Mfg",    value: "51,2",   sub: "latest · S&P Global",           delta: +0.8  },
+        { label: "PMI Svcs",   value: "53,0",   sub: "Expanding",                     delta: +0.3  },
+        { label: "MOVE Index", value: "96,4",   sub: "Bond volatility",               delta: +8.2  },
+      ],
+    },
+    {
+      label: "Commodities",
+      icon: "🛢️",
+      items: [
+        { label: "WTI Crude",  value: "$100,6", sub: "↑ ME conflict shock",            delta: +35.0, color: "var(--negative)"  },
+        { label: "Brent",      value: "$106,2", sub: "/bbl · spot",                   delta: +33.1, color: "var(--negative)"  },
+        { label: "Gold",       value: "$3 012", sub: "Safe haven",                    delta: +12.4  },
+        { label: "Silver",     value: "$33,8",  sub: "/oz · spot",                   delta: +8.2   },
+      ],
+    },
+  ];
+}
 
 function MacroStatsSection() {
+  const { fx, live } = useMacroFx();
+  const MACRO_GROUPS = buildMacroGroups(fx);
   return (
     <div>
-      <SectionBar icon={<Activity size={12} />} title="KEY MACRO INDICATORS" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <SectionBar icon={<Activity size={12} />} title="KEY MACRO INDICATORS" />
+        <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "10px",
+          color: live ? "var(--positive)" : "var(--text-faint)" }}>
+          {live ? "● FX LIVE" : "○ FX CACHED"}
+        </span>
+      </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
         {MACRO_GROUPS.map(group => (
           <div key={group.label}>
@@ -344,42 +403,70 @@ function MacroStatsSection() {
 
 // ─── 3. BANQUES CENTRALES (inclut les taux directeurs) ────────────────────────
 
-const CENTRAL_BANKS = [
+interface CBMeeting { date: string; label: string }  // date = yyyy-mm-dd
+interface CentralBank {
+  name: string; fullName: string; rate: string; trend: "cut" | "hike" | "hold"; color: string;
+  nextExpected: string; inflation: string; gdp: string;
+  meetings: CBMeeting[];
+  note?: string;  // for banks without a fixed-date calendar (PBOC)
+}
+
+// Official 2026 policy-meeting calendars. Past/upcoming status is computed from
+// the real current date — no manual "✓" to maintain.
+const CENTRAL_BANKS: CentralBank[] = [
   {
     name: "Fed", fullName: "Federal Reserve", rate: "3.50–3.75%", trend: "hold", color: "#3b82f6",
-    nextDate: "18 Mar 2026", nextExpected: "Hold (99%)",
-    inflation: "2.4%", gdp: "+2.3%",
-    meetings2026: ["28 Jan ✓", "18 Mar", "29 Apr", "17 Jun", "29 Jul", "16 Sep", "28 Oct", "9 Dec"],
+    nextExpected: "Hold — sticky inflation (CPI 4.2%)", inflation: "4.2%", gdp: "+2.3%",
+    meetings: [
+      { date: "2026-01-28", label: "28 Jan" }, { date: "2026-03-18", label: "18 Mar" },
+      { date: "2026-04-29", label: "29 Apr" }, { date: "2026-06-17", label: "17 Jun" },
+      { date: "2026-07-29", label: "29 Jul" }, { date: "2026-09-16", label: "16 Sep" },
+      { date: "2026-10-28", label: "28 Oct" }, { date: "2026-12-09", label: "9 Dec" },
+    ],
   },
   {
-    name: "BCE", fullName: "European Central Bank", rate: "2.00%", trend: "cut", color: "#f59e0b",
-    nextDate: "19 Mar 2026", nextExpected: "Hold / −25bp",
-    inflation: "2.3%", gdp: "+0.8%",
-    meetings2026: ["5 Feb ✓", "19 Mar", "30 Apr", "11 Jun", "23 Jul", "10 Sep", "29 Oct", "17 Dec"],
+    name: "BCE", fullName: "European Central Bank", rate: "2.00%", trend: "hold", color: "#f59e0b",
+    nextExpected: "Hold / data-dependent", inflation: "2.3%", gdp: "+0.8%",
+    meetings: [
+      { date: "2026-02-05", label: "5 Feb" }, { date: "2026-03-19", label: "19 Mar" },
+      { date: "2026-04-30", label: "30 Apr" }, { date: "2026-06-11", label: "11 Jun" },
+      { date: "2026-07-23", label: "23 Jul" }, { date: "2026-09-10", label: "10 Sep" },
+      { date: "2026-10-29", label: "29 Oct" }, { date: "2026-12-17", label: "17 Dec" },
+    ],
   },
   {
     name: "BoE", fullName: "Bank of England", rate: "3.75%", trend: "hold", color: "#10b981",
-    nextDate: "19 Mar 2026", nextExpected: "Hold",
-    inflation: "2.8%", gdp: "+0.9%",
-    meetings2026: ["5 Feb ✓", "19 Mar", "30 Apr", "18 Jun", "30 Jul", "17 Sep", "5 Nov", "17 Dec"],
+    nextExpected: "Hold", inflation: "2.8%", gdp: "+0.9%",
+    meetings: [
+      { date: "2026-02-05", label: "5 Feb" }, { date: "2026-03-19", label: "19 Mar" },
+      { date: "2026-04-30", label: "30 Apr" }, { date: "2026-06-18", label: "18 Jun" },
+      { date: "2026-07-30", label: "30 Jul" }, { date: "2026-09-17", label: "17 Sep" },
+      { date: "2026-11-05", label: "5 Nov" }, { date: "2026-12-17", label: "17 Dec" },
+    ],
   },
   {
     name: "BoJ", fullName: "Bank of Japan", rate: "0.75%", trend: "hike", color: "#ec4899",
-    nextDate: "19 Mar 2026", nextExpected: "Hold → +25bp Jun",
-    inflation: "2.2%", gdp: "+0.8%",
-    meetings2026: ["24 Jan ✓", "19 Mar", "30 Apr", "17 Jun", "30 Jul", "18 Sep", "29 Oct", "18 Dec"],
+    nextExpected: "Hold → gradual hikes", inflation: "2.2%", gdp: "+0.8%",
+    meetings: [
+      { date: "2026-01-24", label: "24 Jan" }, { date: "2026-03-19", label: "19 Mar" },
+      { date: "2026-04-30", label: "30 Apr" }, { date: "2026-06-17", label: "17 Jun" },
+      { date: "2026-07-30", label: "30 Jul" }, { date: "2026-09-18", label: "18 Sep" },
+      { date: "2026-10-29", label: "29 Oct" }, { date: "2026-12-18", label: "18 Dec" },
+    ],
   },
   {
     name: "PBOC", fullName: "People's Bank of China", rate: "3.10%", trend: "cut", color: "#ef4444",
-    nextDate: "—", nextExpected: "Accommodative",
-    inflation: "0.1%", gdp: "+4.5%",
-    meetings2026: ["Accommodative", "Stimulus", "Pro-consumer", "—", "—", "—", "—", "—"],
+    nextExpected: "Accommodative — stimulus ongoing", inflation: "0.1%", gdp: "+4.5%",
+    meetings: [],
+    note: "No fixed schedule — LPR set monthly. Stance: accommodative, pro-consumer stimulus.",
   },
   {
     name: "SNB", fullName: "Swiss National Bank", rate: "0.25%", trend: "hold", color: "#8b5cf6",
-    nextDate: "19 Mar 2026", nextExpected: "Hold / −25bp",
-    inflation: "0.4%", gdp: "+1.3%",
-    meetings2026: ["—", "19 Mar", "—", "19 Jun", "—", "24 Sep", "—", "11 Dec"],
+    nextExpected: "Hold / −25bp", inflation: "0.4%", gdp: "+1.3%",
+    meetings: [
+      { date: "2026-03-19", label: "19 Mar" }, { date: "2026-06-18", label: "18 Jun" },
+      { date: "2026-09-24", label: "24 Sep" }, { date: "2026-12-11", label: "11 Dec" },
+    ],
   },
 ];
 
@@ -389,6 +476,10 @@ const TREND_COLORS: Record<string, string> = { cut: "var(--positive)", hike: "va
 function CentralBanksSection() {
   const [selected, setSelected] = useState("Fed");
   const cb = CENTRAL_BANKS.find(b => b.name === selected) ?? CENTRAL_BANKS[0];
+
+  const iso  = todayISO();
+  const next = cb.meetings.find(m => m.date >= iso);  // first upcoming meeting
+  const pastCount = cb.meetings.filter(m => m.date < iso).length;
 
   return (
     <div>
@@ -435,24 +526,42 @@ function CentralBanksSection() {
           </div>
           <div>
             <div style={{ ...s.label, marginBottom: "5px" }}>NEXT MEETING</div>
-            <div style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>{cb.nextDate}</div>
+            <div style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>
+              {next ? fmtISO(next.date) : "—"}
+            </div>
             <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>Consensus: {cb.nextExpected}</div>
           </div>
           <div>
-            <div style={{ ...s.label, marginBottom: "5px" }}>2026 CALENDAR</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {cb.meetings2026.map((m, i) => (
-                <span key={i} style={{
-                  fontSize: "9px", padding: "3px 6px",
-                  background: m.includes("✓") ? "var(--positive-bg)" : "var(--surface-offset)",
-                  color: m.includes("✓") ? "var(--positive)" : "var(--text-muted)",
-                  border: `1px solid ${m.includes("✓") ? "var(--positive)" : "var(--border)"}`,
-                  borderRadius: "var(--r-sm)",
-                }}>
-                  {m}
+            <div style={{ ...s.label, marginBottom: "5px", display: "flex", justifyContent: "space-between" }}>
+              <span>2026 CALENDAR</span>
+              {cb.meetings.length > 0 && (
+                <span style={{ color: "var(--positive)", fontWeight: 700 }}>
+                  {pastCount}/{cb.meetings.length} done
                 </span>
-              ))}
+              )}
             </div>
+            {cb.meetings.length === 0 ? (
+              <div style={{ fontSize: "10px", color: "var(--text-muted)", lineHeight: 1.6 }}>{cb.note}</div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                {cb.meetings.map((m, i) => {
+                  const done   = m.date < iso;
+                  const isNext = next?.date === m.date;
+                  const bg     = done ? "var(--positive-bg)" : isNext ? `${cb.color}22` : "var(--surface-offset)";
+                  const fg     = done ? "var(--positive)"    : isNext ? cb.color        : "var(--text-muted)";
+                  const bd     = done ? "var(--positive)"    : isNext ? cb.color        : "var(--border)";
+                  return (
+                    <span key={i} style={{
+                      fontSize: "9px", padding: "3px 6px",
+                      background: bg, color: fg, border: `1px solid ${bd}`,
+                      borderRadius: "var(--r-sm)", fontWeight: isNext ? 700 : 400,
+                    }}>
+                      {m.label}{done ? " ✓" : isNext ? " •" : ""}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -462,17 +571,18 @@ function CentralBanksSection() {
 
 // ─── 4. YIELD CURVE ──────────────────────────────────────────────────────────
 
+// US Treasury par yields — 12 Jun 2026 (yield) vs 5 Jun 2026 (prev). Source: US Treasury.
 const YIELD_DATA = [
-  { maturity: "1M", yield: 4.32, prev: 4.35 },
-  { maturity: "3M", yield: 4.28, prev: 4.30 },
-  { maturity: "6M", yield: 4.18, prev: 4.21 },
-  { maturity: "1Y", yield: 4.05, prev: 4.08 },
-  { maturity: "2Y", yield: 3.76, prev: 3.82 },
-  { maturity: "5Y", yield: 3.92, prev: 3.98 },
-  { maturity: "7Y", yield: 4.01, prev: 4.07 },
-  { maturity: "10Y",yield: 4.27, prev: 4.31 },
-  { maturity: "20Y",yield: 4.62, prev: 4.66 },
-  { maturity: "30Y",yield: 4.68, prev: 4.71 },
+  { maturity: "1M", yield: 3.69, prev: 3.71 },
+  { maturity: "3M", yield: 3.78, prev: 3.78 },
+  { maturity: "6M", yield: 3.82, prev: 3.81 },
+  { maturity: "1Y", yield: 3.86, prev: 3.88 },
+  { maturity: "2Y", yield: 4.09, prev: 4.17 },
+  { maturity: "5Y", yield: 4.21, prev: 4.29 },
+  { maturity: "7Y", yield: 4.34, prev: 4.41 },
+  { maturity: "10Y",yield: 4.48, prev: 4.55 },
+  { maturity: "20Y",yield: 4.98, prev: 5.03 },
+  { maturity: "30Y",yield: 4.97, prev: 5.01 },
 ];
 
 function YieldCurveSection() {
@@ -481,7 +591,7 @@ function YieldCurveSection() {
       <SectionBar icon={<TrendingUp size={12} />} title="YIELD CURVE — US TREASURIES" />
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
         <div style={s.card}>
-          <div style={{ ...s.label, marginBottom: "8px" }}>US YIELD CURVE (MARCH 2026)</div>
+          <div style={{ ...s.label, marginBottom: "8px" }}>US YIELD CURVE (12 JUN 2026)</div>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={YIELD_DATA} margin={{ top: 4, right: 12, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" />
@@ -501,9 +611,9 @@ function YieldCurveSection() {
             <div style={s.label}>KEY SPREADS</div>
             <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "5px" }}>
               {[
-                { label: "10Y − 2Y", value: "+0.51%", color: "var(--positive)", note: "Normal"  },
+                { label: "10Y − 2Y", value: "+0.39%", color: "var(--positive)", note: "Normal"  },
                 { label: "30Y − 5Y", value: "+0.76%", color: "var(--positive)", note: "Steep"   },
-                { label: "10Y − 3M", value: "−0.01%", color: "var(--warning)",  note: "Flat"    },
+                { label: "10Y − 3M", value: "+0.70%", color: "var(--positive)", note: "Positive"},
               ].map(sp => (
                 <div key={sp.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid var(--divider)" }}>
                   <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{sp.label}</span>
@@ -898,6 +1008,8 @@ export default function MacroPage() {
     staleTime: Infinity,
   });
 
+  const todayLabel = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
@@ -905,7 +1017,7 @@ export default function MacroPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "12px", borderBottom: "1px solid var(--divider)" }}>
         <div>
           <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--primary)", letterSpacing: "0.04em" }}>Atlas Macro</div>
-          <div style={{ fontSize: "10px", color: "var(--text-faint)", marginTop: "1px" }}>Global macroeconomic indicators · March 2026 · Static data</div>
+          <div style={{ fontSize: "10px", color: "var(--text-faint)", marginTop: "1px" }}>Global macroeconomic indicators · Live FX · {todayLabel}</div>
         </div>
         <div style={{ display: "flex", gap: "12px", fontSize: "10px", color: "var(--text-muted)" }}>
           <span>🔴 Active Middle East Conflict</span>
@@ -926,7 +1038,7 @@ export default function MacroPage() {
       <BuffettSection />
 
       <div style={{ fontSize: "9px", color: "var(--text-faint)", textAlign: "center", padding: "8px 0", borderTop: "1px solid var(--divider)" }}>
-        Sources: Fed · ECB · BoE · BoJ · BLS · S&P Global PMI · The Economist · FRED · Wilshire Associates · World Bank · CNN · March 2026 · For informational purposes only
+        Sources: Fed · ECB · BoE · BoJ · BLS · S&P Global PMI · The Economist · FRED · Wilshire Associates · World Bank · CNN · {todayLabel} · For informational purposes only
       </div>
     </div>
   );

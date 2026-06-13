@@ -20,6 +20,10 @@ const quoteCache = new Map<string, { data: any; ts: number }>();
 const INDICES_YTD_TTL = 6 * 60 * 60 * 1000; // 6 hours
 let indicesYtdCache: { data: Record<string, { dates: string[]; closes: number[] } | null>; fetchedAt: number } | null = null;
 
+// ─── Macro FX live cache (30 min TTL, stale-on-error) ───────────────────────
+const MACRO_FX_TTL = 30 * 60 * 1000; // 30 min
+let macroFxCache: { data: Record<string, { price: number; change: number } | null>; fetchedAt: number } | null = null;
+
 const BASE_CURRENCY = "EUR"; // All portfolio values consolidated in EUR
 
 // ─── Portfolio computation cache (keyed by portfolio|period — NO benchmark) ──
@@ -177,6 +181,63 @@ export function registerRoutes(httpServer: Server, app: Express) {
     } catch (err) {
       console.error("[benchmark-history]", err);
       return res.json({ byDate: {}, ticker, period, points: 0 });
+    }
+  });
+
+  /** GET /api/macro-fx — live FX spot rates + DXY (server-side Yahoo proxy)
+   *  Response: { EURUSD: {price, change}, USDJPY: {...}, ..., fetchedAt }
+   *  30-min cache, serves stale data when Yahoo blocks the request.
+   */
+  app.get("/api/macro-fx", async (_req, res) => {
+    const PAIRS = [
+      { key: "EURUSD", ticker: "EURUSD=X" },
+      { key: "USDJPY", ticker: "USDJPY=X" },
+      { key: "USDCNY", ticker: "USDCNY=X" },
+      { key: "GBPUSD", ticker: "GBPUSD=X" },
+      { key: "USDCHF", ticker: "USDCHF=X" },
+      { key: "DXY",    ticker: "DX-Y.NYB" },
+    ] as const;
+
+    const now = Date.now();
+    if (macroFxCache && now - macroFxCache.fetchedAt < MACRO_FX_TTL) {
+      res.setHeader("X-Cache", "HIT");
+      return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+    }
+
+    try {
+      const results = await Promise.allSettled(
+        PAIRS.map(async ({ key, ticker }) => {
+          const data = await getMockPrice(ticker);
+          return { key, value: data.price > 0 ? { price: data.price, change: data.dayChange } : null };
+        })
+      );
+
+      const out: Record<string, { price: number; change: number } | null> = {};
+      for (const r of results) {
+        if (r.status === "fulfilled") out[r.value.key] = r.value.value;
+      }
+
+      const gotData = Object.values(out).some(v => v != null && v.price > 0);
+      if (gotData) {
+        macroFxCache = { data: out, fetchedAt: now };
+        res.setHeader("X-Cache", "MISS");
+        return res.json({ ...out, fetchedAt: now });
+      }
+
+      // Yahoo gave nothing — serve stale cache if present
+      if (macroFxCache) {
+        res.setHeader("X-Cache", "STALE");
+        return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+      }
+      res.setHeader("X-Cache", "EMPTY");
+      return res.json({ ...out, fetchedAt: now });
+    } catch (err) {
+      console.error("[macro-fx]", err);
+      if (macroFxCache) {
+        res.setHeader("X-Cache", "STALE");
+        return res.json({ ...macroFxCache.data, fetchedAt: macroFxCache.fetchedAt });
+      }
+      return res.status(500).json({});
     }
   });
 
