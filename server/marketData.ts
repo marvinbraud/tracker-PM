@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+import { normalizeGbx } from '@shared/currency';
 
 /**
  * Market Data Module — Yahoo Finance (unofficial API)
@@ -65,9 +66,11 @@ async function fetchYahooPrice(ticker: string): Promise<TickerData | null> {
 
     const price     = meta.regularMarketPrice as number;
     const prevClose = (meta.chartPreviousClose ?? meta.previousClose ?? price) as number;
+    // dayChange is scale-invariant (same ratio in pence or pounds) — compute before normalizing
     const dayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+    const { price: normPrice, currency } = normalizeGbx(price, meta.currency);
 
-    return { price, dayChange, currency: (meta.currency ?? "USD") as string };
+    return { price: normPrice, dayChange, currency };
   } catch (err) {
     console.warn(`[yahoo] failed to fetch price for ${ticker}:`, (err as Error)?.message);
     return null;
@@ -121,13 +124,14 @@ async function fetchYahooHistory(ticker: string, days: number): Promise<{ date: 
     const result    = data?.chart?.result?.[0];
     const timestamps: number[] = result?.timestamp ?? [];
     const closes: number[]     = result?.indicators?.quote?.[0]?.close ?? [];
+    const currency  = result?.meta?.currency as string | undefined;
 
     if (timestamps.length === 0) return null;
 
     return timestamps
       .map((ts, i) => ({
         date:  new Date(ts * 1000).toISOString().split("T")[0],
-        close: +(closes[i] ?? 0).toFixed(4),
+        close: +normalizeGbx(closes[i] ?? 0, currency).price.toFixed(4),
       }))
       .filter(r => r.close > 0);
   } catch (err) {

@@ -3,6 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
 import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchLiveMacroData, fetchBigMacIndex } from "./marketData";
+import { normalizeGbx } from "@shared/currency";
 import {
   dailyReturnsFromValues,
   annualizedReturn, annualizedVolatility, sharpeRatio, sortinoRatio,
@@ -90,7 +91,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
     try {
       const results = await Promise.allSettled(
         INDICES.map(async ({ key, ticker }) => {
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=ytd&interval=1wk&includePrePost=false`;
+          // Daily interval (not weekly) — weekly bars only give ~40 points/year and
+          // produce a jagged stairstep chart instead of a smooth daily curve.
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=ytd&interval=1d&includePrePost=false`;
           const r = await fetch(url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; ECI-Dashboard/2.0)", "Accept": "application/json" },
             signal: AbortSignal.timeout(10_000),
@@ -723,14 +726,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
         const price     = meta.regularMarketPrice as number;
         const prevClose = (meta.chartPreviousClose ?? meta.previousClose ?? price) as number;
+        // dayChange is scale-invariant (same ratio in pence or pounds) — compute before normalizing
         const changePct = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+        const { price: normPrice, currency } = normalizeGbx(price, meta.currency);
+        const normPrevClose = normalizeGbx(prevClose, meta.currency).price;
 
         const item = {
           symbol:                     sym,
-          regularMarketPrice:         price,
+          regularMarketPrice:         normPrice,
           regularMarketChangePercent: changePct,
-          regularMarketPreviousClose: prevClose,
-          currency:                   (meta.currency    ?? "USD") as string,
+          regularMarketPreviousClose: normPrevClose,
+          currency,
           shortName:                  (meta.shortName   ?? undefined) as string | undefined,
           marketState:                (meta.marketState ?? undefined) as string | undefined,
         };

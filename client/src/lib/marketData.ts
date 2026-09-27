@@ -6,6 +6,7 @@
  *   2. If the server returns no results (blocked IP, cold start), fall back to direct browser calls
  *      to the Yahoo Finance v8 chart endpoint, which has CORS headers and uses the user's IP.
  */
+import { normalizeGbx } from "@shared/currency";
 
 export interface LiveQuote {
   ticker: string;
@@ -80,15 +81,18 @@ async function fetchViaBrowser(tickers: string[]): Promise<Record<string, LiveQu
       const price    = meta.regularMarketPrice as number;
       const prevClose =
         (meta.chartPreviousClose ?? meta.previousClose ?? price) as number;
+      // dayChange is scale-invariant (same ratio in pence or pounds) — compute before normalizing
       const changePercent =
         prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+      const { price: normPrice, currency } = normalizeGbx(price, meta.currency);
+      const normPrevClose = normalizeGbx(prevClose, meta.currency).price;
 
       results[ticker] = {
         ticker,
-        price,
+        price: normPrice,
         changePercent,
-        prevClose,
-        currency:    meta.currency    ?? "USD",
+        prevClose: normPrevClose,
+        currency,
         marketState: meta.marketState ?? undefined,
       };
     } catch (err) {
