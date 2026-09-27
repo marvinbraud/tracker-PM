@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
 import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchBigMacIndex } from "./marketData";
 import { normalizeGbx } from "@shared/currency";
-import { fetchPolicyRates, fetchYieldCurve, fetchFearGreedIndex } from "./fred";
+import { fetchPolicyRates, fetchYieldCurve, fetchFearGreedIndex, fetchBuffettIndicator } from "./fred";
 import {
   dailyReturnsFromValues,
   annualizedReturn, annualizedVolatility, sharpeRatio, sortinoRatio,
@@ -288,6 +288,19 @@ export function registerRoutes(httpServer: Server, app: Express) {
     } catch (err) {
       console.error("[fear-greed]", err);
       return res.status(500).json({ error: "Failed to fetch Fear & Greed index" });
+    }
+  });
+
+  /** GET /api/buffett-indicator — live-estimated US Buffett Indicator, cached 6h */
+  app.get("/api/buffett-indicator", async (_req, res) => {
+    try {
+      const data = await fetchBuffettIndicator();
+      if (!data) return res.status(503).json({ error: "Source unavailable" });
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=21600");
+      return res.json(data);
+    } catch (err) {
+      console.error("[buffett-indicator]", err);
+      return res.status(500).json({ error: "Failed to fetch Buffett Indicator" });
     }
   });
 

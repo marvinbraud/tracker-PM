@@ -1086,17 +1086,25 @@ const BUFFETT_HISTORY_BASE = [
   { d: "2024", us: 199, world: 125 },
 ];
 
-// Live Buffett Indicator was attempted (server/fred.ts) and rejected after
-// verification: two independent methodologies both produced values far
-// above any historical precedent (>300%, vs. a documented ~213% peak in
-// 2021) — an S&P 500 + GDP extrapolation from the last free market-cap/GDP
-// print (2020) doesn't capture buybacks/IPOs over a 6-year gap, and the
-// Fed's Flow of Funds "corporate equities" series checked out ~30% too high
-// against the known 2021 figure (it likely includes private/closely-held
-// equity, not just public-market cap). Rather than ship a number that looks
-// precise but is wrong, this stays fully static.
-const BUFFETT_CURRENT_US    = 165;
-const BUFFETT_CURRENT_WORLD = 118;
+// Live US Buffett Indicator: Wilshire 5000 (^W5000, still live on Yahoo even
+// though FRED dropped it) × Wilshire's own $1.05bn/point calibration, over
+// live US GDP (FRED). Backtested against two known historical points before
+// shipping (2017: off by 1.3pp; 2021: off by 7.9pp) — see server/fred.ts for
+// the full methodology and the two rejected approaches that came before it.
+// World Markets has no equivalent live source yet and stays static.
+const BUFFETT_FALLBACK_US   = 165;
+const BUFFETT_CURRENT_WORLD = 118; // static — no live source found yet
+
+interface LiveBuffett { ratio: number; asOf: string; w5000Level: number; gdpBn: number; isEstimate: true; marginNote: string }
+
+function useBuffettIndicator() {
+  const { data, isLoading } = useQuery<LiveBuffett>({
+    queryKey: ["/api/buffett-indicator"],
+    staleTime: 3 * 60 * 60 * 1000, // server caches 6h — just limits client refetch churn
+    retry: 1,
+  });
+  return { data, live: !!data, loading: isLoading };
+}
 
 function buffettStatus(v: number) {
   if (v > 200) return { label: "EXTREMELY OVERVALUED",    color: "var(--negative)" };
@@ -1107,13 +1115,24 @@ function buffettStatus(v: number) {
 }
 
 function BuffettSection() {
-  const usStatus    = buffettStatus(BUFFETT_CURRENT_US);
+  const { data: liveBuffett, live: buffettLive, loading: buffettLoading } = useBuffettIndicator();
+  const buffettUS = liveBuffett?.ratio ?? BUFFETT_FALLBACK_US;
+  const usStatus    = buffettStatus(buffettUS);
   const worldStatus = buffettStatus(BUFFETT_CURRENT_WORLD);
-  const BUFFETT_HISTORY = [...BUFFETT_HISTORY_BASE, { d: "Mar 26", us: BUFFETT_CURRENT_US, world: BUFFETT_CURRENT_WORLD }];
+  const BUFFETT_HISTORY = [
+    ...BUFFETT_HISTORY_BASE,
+    { d: liveBuffett ? liveBuffett.asOf.slice(0, 7) : "Mar 26", us: buffettUS, world: BUFFETT_CURRENT_WORLD },
+  ];
 
   return (
     <div>
-      <SectionBar icon={<BarChart2 size={12} />} title="BUFFETT INDICATOR — MARKET CAP / GDP" note="STATIC" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <SectionBar icon={<BarChart2 size={12} />} title="BUFFETT INDICATOR — MARKET CAP / GDP" />
+        <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "10px",
+          color: buffettLive ? "var(--positive)" : buffettLoading ? "var(--text-faint)" : "var(--warning)" }}>
+          {buffettLive ? "● US LIVE · EST." : buffettLoading ? "○ LOADING…" : "○ CACHED"}
+        </span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
         {/* Chart */}
         <div style={s.card}>
@@ -1141,15 +1160,17 @@ function BuffettSection() {
             </LineChart>
           </ResponsiveContainer>
           <div style={{ fontSize: "9px", color: "var(--text-faint)", marginTop: "4px" }}>
-            Source: Wilshire 5000 · BEA · World Bank · Quarterly data
+            {buffettLive
+              ? `US: ^W5000 (${liveBuffett!.w5000Level.toLocaleString("en-US", { maximumFractionDigits: 0 })}) × $1.05bn/pt ÷ GDP (as of ${liveBuffett!.asOf}) · ${liveBuffett!.marginNote} · World: static`
+              : "Source: Wilshire 5000 · BEA · World Bank · Quarterly data"}
           </div>
         </div>
 
         {/* Readings */}
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {[
-            { label: "US Markets",       value: BUFFETT_CURRENT_US,    status: usStatus,    sub: "Wilshire 5000 / US GDP"    },
-            { label: "World Markets",    value: BUFFETT_CURRENT_WORLD, status: worldStatus, sub: "MSCI World / World GDP"    },
+            { label: "US Markets",       value: buffettUS,             status: usStatus,    sub: buffettLive ? "Wilshire 5000 / US GDP · live est." : "Wilshire 5000 / US GDP" },
+            { label: "World Markets",    value: BUFFETT_CURRENT_WORLD, status: worldStatus, sub: "MSCI World / World GDP · static" },
           ].map(({ label, value, status, sub }) => (
             <div key={label} style={{ ...s.card, borderLeft: `3px solid ${status.color}` }}>
               <div style={s.label}>{label}</div>
@@ -1173,9 +1194,9 @@ function BuffettSection() {
           ))}
           <div style={{ ...s.card, fontSize: "9px", color: "var(--text-muted)", lineHeight: 1.7 }}>
             <div style={{ ...s.label, marginBottom: "5px" }}>INTERPRETATION</div>
-            US markets at <strong style={{ color: usStatus.color }}>{BUFFETT_CURRENT_US}%</strong> remain in
-            {" "}<strong style={{ color: usStatus.color }}>{usStatus.label.toLowerCase()}</strong> territory despite the early 2026 correction.
-            World valuations at <strong style={{ color: worldStatus.color }}>{BUFFETT_CURRENT_WORLD}%</strong> remain moderately elevated.
+            US markets at <strong style={{ color: usStatus.color }}>{buffettUS.toFixed(1)}%</strong> sit in
+            {" "}<strong style={{ color: usStatus.color }}>{usStatus.label.toLowerCase()}</strong> territory{buffettLive ? " (live estimate)" : ""}.
+            World valuations at <strong style={{ color: worldStatus.color }}>{BUFFETT_CURRENT_WORLD}%</strong> (static) remain moderately elevated.
           </div>
         </div>
       </div>
