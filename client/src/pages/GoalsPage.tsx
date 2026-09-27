@@ -736,7 +736,7 @@ export default function GoalsPage({ portfolio }: Props) {
         {/* Add received form */}
         {showAddRec && (
           <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", background: "var(--primary-dim)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: "8px", alignItems: "flex-end" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "0.9fr 0.9fr 1fr 0.7fr 1.6fr auto", gap: "8px", alignItems: "flex-end" }}>
               <div>
                 <label style={labelStyle}>Ticker</label>
                 <select className="field-input" value={recForm.ticker} onChange={e => setRecForm(f => ({ ...f, ticker: e.target.value }))} style={inputStyle}>
@@ -760,15 +760,15 @@ export default function GoalsPage({ portfolio }: Props) {
                   {["EUR","USD","GBP","CHF","CAD","JPY"].map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+              <div>
+                <label style={labelStyle}>Notes (optional)</label>
+                <input className="field-input" placeholder="e.g. Q3 dividend, special distribution…"
+                  value={recForm.notes} onChange={e => setRecForm(f => ({ ...f, notes: e.target.value }))} style={inputStyle} />
+              </div>
               <div style={{ display: "flex", gap: "4px" }}>
                 <button onClick={addReceived} style={btnPrimStyle}><Check size={13} /></button>
                 <button onClick={() => setShowAddRec(false)} style={btnSecStyle}><X size={13} /></button>
               </div>
-            </div>
-            <div style={{ marginTop: "8px" }}>
-              <label style={labelStyle}>Notes (optional)</label>
-              <input className="field-input" placeholder="e.g. Q3 dividend, special distribution…"
-                value={recForm.notes} onChange={e => setRecForm(f => ({ ...f, notes: e.target.value }))} style={{ ...inputStyle, width: "100%" }} />
             </div>
           </div>
         )}
