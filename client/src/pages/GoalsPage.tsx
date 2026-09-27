@@ -34,6 +34,7 @@ interface ReceivedDividend {
   date: string; // YYYY-MM-DD
   currency: string;
   notes: string;
+  source?: "auto" | "manual"; // undefined = manual (legacy entries predate this field)
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -79,6 +80,16 @@ const CATEGORY_COLORS: Record<GoalCategory, string> = {
 
 const FREQ_FACTOR: Record<DividendFrequency, number> = {
   monthly: 12, quarterly: 4, "semi-annual": 2, annual: 1,
+};
+
+// Nominal pay months (0-indexed) per frequency — the last day of each month
+// is used as the nominal pay date, both for the projected-income chart and
+// for auto-accruing received dividends once that date has passed.
+const PAY_MONTHS: Record<DividendFrequency, number[]> = {
+  monthly: [0,1,2,3,4,5,6,7,8,9,10,11],
+  quarterly: [2, 5, 8, 11],
+  "semi-annual": [5, 11],
+  annual: [11],
 };
 
 function monthsUntil(dateStr: string): number {
@@ -348,6 +359,53 @@ export default function GoalsPage({ portfolio }: Props) {
   useEffect(() => { saveDivSettings(divSettings); }, [divSettings]);
   useEffect(() => { saveReceived(received); }, [received]);
 
+  // ── Auto-accrue dividends once their nominal pay date has passed ──
+  // Nominal pay date = last day of each PAY_MONTHS entry for the holding's
+  // frequency, current year. Idempotent (deterministic id) and skips any
+  // period already covered by an existing entry — auto or manually logged.
+  useEffect(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const candidates: ReceivedDividend[] = [];
+
+    for (const h of holdings) {
+      const s = divSettings[h.ticker];
+      if (!s || s.annualDPS <= 0) continue;
+      const perPayment = (s.annualDPS * h.qty) / FREQ_FACTOR[s.frequency];
+
+      for (const month of PAY_MONTHS[s.frequency]) {
+        const payDate = new Date(year, month + 1, 0); // last day of `month`
+        if (payDate > now) continue; // not due yet
+
+        candidates.push({
+          id: `auto-${h.ticker}-${year}-${month}`,
+          ticker: h.ticker,
+          amount: parseFloat(perPayment.toFixed(2)),
+          date: payDate.toISOString().split("T")[0],
+          currency: s.currency,
+          notes: "",
+          source: "auto",
+        });
+      }
+    }
+
+    if (candidates.length === 0) return;
+
+    setReceived(prev => {
+      const covered = new Set(
+        prev.map(r => {
+          const d = new Date(r.date);
+          return `${r.ticker}|${d.getFullYear()}|${d.getMonth()}`;
+        })
+      );
+      const toAdd = candidates.filter(c => {
+        const d = new Date(c.date);
+        return !covered.has(`${c.ticker}|${d.getFullYear()}|${d.getMonth()}`);
+      });
+      return toAdd.length > 0 ? [...toAdd, ...prev] : prev;
+    });
+  }, [holdings, divSettings]);
+
   // ── Goal KPIs ──
   const goalKpis = useMemo(() => {
     const total   = goals.length;
@@ -397,14 +455,7 @@ export default function GoalsPage({ portfolio }: Props) {
       const freq = FREQ_FACTOR[s.frequency];
       const perPayment = annualIncome / freq;
 
-      // distribute payments across months
-      const months: number[] = [];
-      if (s.frequency === "monthly") { for (let i = 0; i < 12; i++) months.push(i); }
-      else if (s.frequency === "quarterly") { months.push(2, 5, 8, 11); }
-      else if (s.frequency === "semi-annual") { months.push(5, 11); }
-      else { months.push(11); }
-
-      for (const m of months) byMonth[m] = (byMonth[m] ?? 0) + perPayment;
+      for (const m of PAY_MONTHS[s.frequency]) byMonth[m] = (byMonth[m] ?? 0) + perPayment;
     }
 
     return MONTHS_SHORT.map((m, i) => ({ month: m, income: parseFloat(byMonth[i].toFixed(2)) }));
@@ -453,7 +504,7 @@ export default function GoalsPage({ portfolio }: Props) {
   function addReceived() {
     const amt = parseFloat(recForm.amount);
     if (!recForm.ticker || isNaN(amt) || !recForm.date) return;
-    setReceived(prev => [{ ...recForm, id: uid(), amount: amt }, ...prev]);
+    setReceived(prev => [{ ...recForm, id: uid(), amount: amt, source: "manual" }, ...prev]);
     setRecForm({ ticker: "", amount: "", date: "", currency: "EUR", notes: "" });
     setShowAddRec(false);
   }
@@ -586,8 +637,8 @@ export default function GoalsPage({ portfolio }: Props) {
                   const isEdit = editTicker === h.ticker;
                   return (
                     <tr key={h.ticker} style={{ borderBottom: "1px solid var(--border)", background: isEdit ? "var(--primary-dim)" : "transparent" }}>
-                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--primary)" }}>{h.ticker}</td>
-                      <td style={{ ...tdStyle, color: "var(--text-muted)", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</td>
+                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--primary)", whiteSpace: "nowrap" }}>{h.ticker}</td>
+                      <td style={{ ...tdStyle, color: "var(--text-muted)", minWidth: "260px", maxWidth: "360px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={h.name}>{h.name}</td>
                       <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", textAlign: "right" }}>{h.qty.toLocaleString()}</td>
                       <td style={tdStyle}>
                         {isEdit ? (
@@ -714,12 +765,25 @@ export default function GoalsPage({ portfolio }: Props) {
                 {[...received].sort((a, b) => b.date.localeCompare(a.date)).map(r => (
                   <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", fontSize: "11px" }}>{r.date}</td>
-                    <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--primary)" }}>{r.ticker}</td>
+                    <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--primary)" }}>
+                      {r.ticker}
+                      {r.source === "auto" && (
+                        <span style={{
+                          marginLeft: "6px", fontSize: "8px", fontWeight: 700, letterSpacing: ".03em",
+                          color: "var(--text-faint)", border: "1px solid var(--border)",
+                          borderRadius: "var(--r-sm)", padding: "1px 4px", verticalAlign: "middle",
+                        }} title="Auto-accrued from dividend settings once the nominal pay date passed">
+                          AUTO
+                        </span>
+                      )}
+                    </td>
                     <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", textAlign: "right", color: "var(--positive)" }}>
                       {fmtSmall(r.amount, r.currency)}
                     </td>
                     <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{r.currency}</td>
-                    <td style={{ ...tdStyle, color: "var(--text-faint)", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notes || "—"}</td>
+                    <td style={{ ...tdStyle, color: "var(--text-faint)", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.notes || (r.source === "auto" ? "Auto-accrued" : "—")}
+                    </td>
                     <td style={{ ...tdStyle, textAlign: "right" }}>
                       <button onClick={() => deleteReceived(r.id)} style={{ ...iconBtnStyle, color: "var(--negative)" }} title="Delete"><Trash2 size={12} /></button>
                     </td>
