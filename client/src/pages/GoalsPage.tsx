@@ -621,7 +621,7 @@ export default function GoalsPage({ portfolio }: Props) {
             No holdings found — import positions first.
           </div>
         ) : (
-          <div style={{ overflowX: "auto", maxHeight: "420px", overflowY: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: "640px", overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
