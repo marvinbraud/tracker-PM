@@ -1071,7 +1071,8 @@ function PizzaAndFearSection() {
 
 // ─── 8. BUFFETT INDICATOR ──────────────────────────────────────────────────────
 
-const BUFFETT_HISTORY = [
+// Historical trend points — illustrative, pre-dates the live estimate below.
+const BUFFETT_HISTORY_BASE = [
   { d: "2000", us: 153, world: 112 },
   { d: "2003", us:  75, world:  61 },
   { d: "2007", us: 105, world:  99 },
@@ -1083,9 +1084,17 @@ const BUFFETT_HISTORY = [
   { d: "2022", us: 154, world: 107 },
   { d: "2023", us: 169, world: 115 },
   { d: "2024", us: 199, world: 125 },
-  { d: "Mar 26",us: 165, world: 118 },
 ];
 
+// Live Buffett Indicator was attempted (server/fred.ts) and rejected after
+// verification: two independent methodologies both produced values far
+// above any historical precedent (>300%, vs. a documented ~213% peak in
+// 2021) — an S&P 500 + GDP extrapolation from the last free market-cap/GDP
+// print (2020) doesn't capture buybacks/IPOs over a 6-year gap, and the
+// Fed's Flow of Funds "corporate equities" series checked out ~30% too high
+// against the known 2021 figure (it likely includes private/closely-held
+// equity, not just public-market cap). Rather than ship a number that looks
+// precise but is wrong, this stays fully static.
 const BUFFETT_CURRENT_US    = 165;
 const BUFFETT_CURRENT_WORLD = 118;
 
@@ -1100,6 +1109,7 @@ function buffettStatus(v: number) {
 function BuffettSection() {
   const usStatus    = buffettStatus(BUFFETT_CURRENT_US);
   const worldStatus = buffettStatus(BUFFETT_CURRENT_WORLD);
+  const BUFFETT_HISTORY = [...BUFFETT_HISTORY_BASE, { d: "Mar 26", us: BUFFETT_CURRENT_US, world: BUFFETT_CURRENT_WORLD }];
 
   return (
     <div>

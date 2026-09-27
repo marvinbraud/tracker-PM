@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
-import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchLiveMacroData, fetchBigMacIndex } from "./marketData";
+import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchBigMacIndex } from "./marketData";
 import { normalizeGbx } from "@shared/currency";
 import { fetchPolicyRates, fetchYieldCurve, fetchFearGreedIndex } from "./fred";
 import {
@@ -291,16 +291,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  /** GET /api/macro — Big Mac Index only. Note: the client currently serves
+   *  /api/macro from a local mock in queryClient.ts and never calls this
+   *  route; it's kept for any direct/external caller. */
   app.get("/api/macro", async (_req, res) => {
     try {
-      const [macroData, bigMacData] = await Promise.all([
-        fetchLiveMacroData(),
-        fetchBigMacIndex()
-      ]);
-      res.json({
-        ...macroData,
-        bigMac: bigMacData
-      });
+      const bigMacData = await fetchBigMacIndex();
+      res.json({ bigMac: bigMacData });
     } catch (err) {
       console.error("[Macro API Info]", err);
       res.status(500).json({ error: "Failed to fetch macro data" });

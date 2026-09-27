@@ -214,3 +214,24 @@ export async function fetchFearGreedIndex(): Promise<FearGreedData | null> {
     return null;
   }
 }
+
+// ─── Buffett Indicator (US) — investigated, NOT implemented live ───────────
+// Two methodologies were tried and both rejected after verification against
+// the known ~213% 2021 peak (this app's own historical data point):
+//
+//   1. Anchor on the last free market-cap/GDP print (World Bank via FRED,
+//      stopped updating in 2020 = 194.9%), projected forward with live S&P
+//      500 (as a market-cap proxy) and live GDP. Result for today: ~313% —
+//      doesn't hold up; 6 years of buybacks/IPOs aren't captured by price
+//      alone.
+//   2. FRED's Fed Flow-of-Funds series BOGZ1LM883164105Q ("All Domestic
+//      Sectors; Corporate Equities; Liability, Market Value") as a direct
+//      Wilshire 5000 substitute. Backtested against 2021: gives 279% vs.
+//      the documented 213% — systematically ~30% too high, likely because
+//      it includes private/closely-held equity, not just public-market cap.
+//
+// Both produce numbers with no historical precedent in either direction —
+// a strong signal of a broken methodology, not a genuine reading. Rather
+// than ship a confidently-wrong number, the Buffett Indicator stays static
+// (see MacroPage.tsx). Revisit only with a numerator that's a clean match
+// for "public US market cap" (e.g. a paid data vendor).

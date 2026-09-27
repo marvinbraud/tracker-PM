@@ -286,110 +286,12 @@ function gaussianRandom(): number {
 }
 
 // ─── Macro Data Fetch ─────────────────────────────────────────────────────────
-
-export async function fetchLiveMacroData() {
-  const INDICES_TICKERS = [
-    { key: "SPX", ticker: "^GSPC" },
-    { key: "NDX", ticker: "^NDX" },
-    { key: "CAC", ticker: "^FCHI" },
-    { key: "DAX", ticker: "^GDAXI" },
-    { key: "NI225", ticker: "^N225" },
-    { key: "MXWO", ticker: "URTH" },
-    { key: "MXEF", ticker: "EEM" },
-    { key: "HSI", ticker: "^HSI" },
-    { key: "UKX", ticker: "^FTSE" }
-  ];
-
-  const COMMODITIES_TICKERS = [
-    { key: "WTI Crude", ticker: "CL=F" },
-    { key: "Brent Crude", ticker: "BZ=F" },
-    { key: "Gold", ticker: "GC=F" },
-    { key: "Silver", ticker: "SI=F" },
-    { key: "Nat. Gas", ticker: "NG=F" },
-    { key: "Wheat", ticker: "ZW=F" },
-    { key: "Copper", ticker: "HG=F" },
-    { key: "Bitcoin", ticker: "BTC-USD" }
-  ];
-
-  const YIELD_TICKERS = [
-    { key: "3M", ticker: "^IRX" },
-    { key: "5Y", ticker: "^FVX" },
-    { key: "10Y", ticker: "^TNX" },
-    { key: "30Y", ticker: "^TYX" }
-  ];
-
-  const OTHER_MACRO = [
-    { key: "VIX", ticker: "^VIX" },
-    { key: "DXY", ticker: "DX-Y.NYB" },
-    { key: "EURUSD", ticker: "EURUSD=X" },
-    { key: "USDJPY", ticker: "JPY=X" },
-  ];
-
-  const allTickers = [
-    ...INDICES_TICKERS,
-    ...COMMODITIES_TICKERS,
-    ...YIELD_TICKERS,
-    ...OTHER_MACRO
-  ];
-
-  // Batch query all tickers in a single API call to RapidAPI
-  const tickerSymbols = allTickers.map(t => t.ticker);
-  let quotesMap: Record<string, TickerData | null> = {};
-  
-  try {
-    const url = `https://yahoo-finance-real-time1.p.rapidapi.com/market/get-quotes?region=US&symbols=${tickerSymbols.join(',')}`;
-    const res = await fetch(url, {
-      headers: {
-        "X-RapidAPI-Key": "0d6b10fe86mshaf757ad0ada2533p1963f6jsn74204fe24d52",
-        "X-RapidAPI-Host": "yahoo-finance-real-time1.p.rapidapi.com"
-      }
-    });
-
-    if (!res.ok) throw new Error(`RapidAPI Error: ${res.status}`);
-    const json = await res.json();
-    const quotes = json?.quoteResponse?.result || [];
-
-    for (const quote of quotes) {
-      const price = quote.regularMarketPrice ?? quote.postMarketPrice ?? quote.previousClose ?? 0;
-      const prev = quote.regularMarketPreviousClose ?? quote.previousClose ?? price;
-      const dayChange = prev > 0 ? ((price - prev) / prev) * 100 : 0;
-      quotesMap[quote.symbol] = { price, dayChange, currency: quote.currency ?? "USD" };
-    }
-  } catch (err: any) {
-    console.warn('[yahoo] batch quote failed (likely 429 IP Block). Using simulated fallback.', err.message);
-    // Simulate live data so the UI doesn't break when IP is blocked
-    for (const t of allTickers) {
-      // Generate a somewhat realistic static mock price based on known index values
-      let basePrice = 100;
-      if (t.ticker.includes("GSPC")) basePrice = 5600;
-      if (t.ticker.includes("NDX")) basePrice = 19200;
-      if (t.ticker.includes("FCHI")) basePrice = 7900;
-      if (t.ticker === "BTC-USD") basePrice = 64000;
-      if (t.ticker === "CL=F") basePrice = 82;
-      if (t.ticker === "GC=F") basePrice = 2400;
-      if (t.ticker.includes("TNX")) basePrice = 42; // Yield 4.2%
-
-      const randomChange = (Math.random() * 2 - 1); // between -1% and +1%
-      quotesMap[t.ticker] = {
-        price: +(basePrice * (1 + randomChange / 100)).toFixed(2),
-        dayChange: +randomChange.toFixed(2),
-        currency: "USD"
-      };
-    }
-  }
-
-  const mapData = (items: any[]) => items.map(item => ({
-    ...item,
-    data: quotesMap[item.ticker] || null
-  }));
-
-  return {
-    indices: mapData(INDICES_TICKERS),
-    commodities: mapData(COMMODITIES_TICKERS),
-    yields: mapData(YIELD_TICKERS),
-    other: mapData(OTHER_MACRO)
-  };
-}
+// (fetchLiveMacroData() was removed — it used a hardcoded RapidAPI key and
+// silently fell back to Math.random() fake prices when that API failed. It
+// was also unreachable: the client serves /api/macro from a local mock in
+// queryClient.ts and never actually calls the server route. Real live macro
+// data now comes from /api/macro-markets, /api/policy-rates, /api/yield-curve,
+// /api/fear-greed, and /api/buffett-indicator — see server/fred.ts.)
 
 let bigMacCache: any[] | null = null;
 let bigMacExpiresAt = 0;
