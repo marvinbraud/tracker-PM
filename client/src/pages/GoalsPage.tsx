@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { Target, TrendingUp, Wallet, CalendarDays, Plus, Trash2, Pencil, Check, X, DollarSign, BarChart3 } from "lucide-react";
+import { Target, TrendingUp, Wallet, CalendarDays, Plus, Trash2, Pencil, Check, X, DollarSign, BarChart3, ChevronDown, ChevronRight } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
@@ -332,6 +332,9 @@ export default function GoalsPage({ portfolio }: Props) {
   const [goals,    setGoals]    = useState<Goal[]>(loadGoals);
   const [showForm, setShowForm] = useState(false);
   const [editId,   setEditId]   = useState<string | null>(null);
+  // Collapsed by default so the Dividend Revenue Tracker (and its holdings
+  // table) is immediately visible without scrolling past the goals section.
+  const [goalsOpen, setGoalsOpen] = useState(false);
 
   // ── Dividend state ──
   const [divSettings, setDivSettings] = useState<Record<string, DividendSetting>>(loadDivSettings);
@@ -516,42 +519,65 @@ export default function GoalsPage({ portfolio }: Props) {
     <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: "14px", overflowY: "auto", height: "100%" }}>
 
       {/* ═══════════════ GOALS ═══════════════ */}
-      <SectionBar title="🎯 Goal Tracker" />
-
-      {/* Goal KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
-        <KpiTile label="Total Goals"   value={String(goalKpis.total)}   sub={`${goalKpis.onTrack} on track`} />
-        <KpiTile label="On Track"      value={String(goalKpis.onTrack)} color="var(--positive)" />
-        <KpiTile label="At Risk / Behind" value={`${goalKpis.atRisk} / ${goalKpis.behind}`} color={goalKpis.behind > 0 ? "var(--negative)" : goalKpis.atRisk > 0 ? "var(--warning)" : "var(--text)"} />
-        <KpiTile label="Total Saved" value={fmt(goalKpis.totalCurrent)} sub={`of ${fmt(goalKpis.totalTarget)} target`} />
-      </div>
-
-      {/* Add goal button / form */}
-      {!showForm && !editId && (
-        <button onClick={() => setShowForm(true)} style={{ ...btnPrimStyle, alignSelf: "flex-start", gap: "6px" }}>
-          <Plus size={13} /> Add Goal
-        </button>
-      )}
-      {showForm && <GoalForm onSave={addGoal} onCancel={() => setShowForm(false)} />}
-
-      {/* Goals grid */}
-      {goals.length === 0 && !showForm && (
-        <div style={{ textAlign: "center", color: "var(--text-faint)", padding: "32px 16px", fontSize: "13px", border: "1px dashed var(--border)", borderRadius: "var(--r-lg)" }}>
-          No goals yet — click "Add Goal" to get started.
+      {/* Collapsed by default — this section can get long with even one
+          goal card, pushing the Dividend Tracker below the fold. */}
+      <button
+        onClick={() => setGoalsOpen(v => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: "6px", width: "100%",
+          background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
+        }}
+        aria-expanded={goalsOpen}
+      >
+        {goalsOpen ? <ChevronDown size={13} color="var(--text-muted)" /> : <ChevronRight size={13} color="var(--text-muted)" />}
+        <div className="bb-section-bar" style={{ marginBottom: 0, flex: 1 }}>
+          <span>🎯 Goal Tracker</span>
         </div>
-      )}
-      {goals.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "10px" }}>
-          {goals.map(g =>
-            editId === g.id && editingGoal ? (
-              <GoalForm key={g.id} initial={editingGoal}
-                onSave={upd => updateGoal(g.id, upd)} onCancel={() => setEditId(null)} />
-            ) : (
-              <GoalCard key={g.id} goal={g}
-                onEdit={() => setEditId(g.id)} onDelete={() => deleteGoal(g.id)} />
-            )
+        {!goalsOpen && (
+          <span style={{ fontSize: "10px", color: "var(--text-faint)", whiteSpace: "nowrap" }}>
+            {goalKpis.total} goal{goalKpis.total !== 1 ? "s" : ""} · {fmt(goalKpis.totalCurrent)} saved
+          </span>
+        )}
+      </button>
+
+      {goalsOpen && (
+        <>
+          {/* Goal KPIs */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
+            <KpiTile label="Total Goals"   value={String(goalKpis.total)}   sub={`${goalKpis.onTrack} on track`} />
+            <KpiTile label="On Track"      value={String(goalKpis.onTrack)} color="var(--positive)" />
+            <KpiTile label="At Risk / Behind" value={`${goalKpis.atRisk} / ${goalKpis.behind}`} color={goalKpis.behind > 0 ? "var(--negative)" : goalKpis.atRisk > 0 ? "var(--warning)" : "var(--text)"} />
+            <KpiTile label="Total Saved" value={fmt(goalKpis.totalCurrent)} sub={`of ${fmt(goalKpis.totalTarget)} target`} />
+          </div>
+
+          {/* Add goal button / form */}
+          {!showForm && !editId && (
+            <button onClick={() => setShowForm(true)} style={{ ...btnPrimStyle, alignSelf: "flex-start", gap: "6px" }}>
+              <Plus size={13} /> Add Goal
+            </button>
           )}
-        </div>
+          {showForm && <GoalForm onSave={addGoal} onCancel={() => setShowForm(false)} />}
+
+          {/* Goals grid */}
+          {goals.length === 0 && !showForm && (
+            <div style={{ textAlign: "center", color: "var(--text-faint)", padding: "32px 16px", fontSize: "13px", border: "1px dashed var(--border)", borderRadius: "var(--r-lg)" }}>
+              No goals yet — click "Add Goal" to get started.
+            </div>
+          )}
+          {goals.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "10px" }}>
+              {goals.map(g =>
+                editId === g.id && editingGoal ? (
+                  <GoalForm key={g.id} initial={editingGoal}
+                    onSave={upd => updateGoal(g.id, upd)} onCancel={() => setEditId(null)} />
+                ) : (
+                  <GoalCard key={g.id} goal={g}
+                    onEdit={() => setEditId(g.id)} onDelete={() => deleteGoal(g.id)} />
+                )
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* ═══════════════ DIVIDENDS ═══════════════ */}
