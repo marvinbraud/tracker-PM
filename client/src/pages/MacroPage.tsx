@@ -499,38 +499,87 @@ const CENTRAL_BANKS: CentralBank[] = [
 const TREND_ICONS:  Record<string, string> = { cut: "▼ Easing", hike: "▲ Tightening", hold: "◆ On hold" };
 const TREND_COLORS: Record<string, string> = { cut: "var(--positive)", hike: "var(--negative)", hold: "var(--warning)" };
 
+// ─── Live policy rates (FRED) ───────────────────────────────────────────────
+interface LivePolicyRates {
+  fed: { rateLow: number; rateHigh: number; asOf: string } | null;
+  ecb: { rate: number; asOf: string } | null;
+  boe: { rate: number; asOf: string; isProxy: true; proxyLabel: string } | null;
+  boj: { rate: number; asOf: string; isProxy: true; proxyLabel: string } | null;
+}
+
+function useLivePolicyRates() {
+  return useQuery<LivePolicyRates>({
+    queryKey: ["/api/policy-rates"],
+    staleTime: 60 * 60 * 1000, // server itself caches 7 days — this just limits refetch churn
+    retry: 1,
+  });
+}
+
+interface DisplayRate { rate: string; isLive: boolean; isProxy: boolean; proxyLabel?: string; asOf?: string }
+
+function liveRateFor(bank: CentralBank, live: LivePolicyRates | undefined): DisplayRate {
+  if (live) {
+    if (bank.name === "Fed" && live.fed) {
+      return { rate: `${live.fed.rateLow.toFixed(2)}–${live.fed.rateHigh.toFixed(2)}%`, isLive: true, isProxy: false, asOf: live.fed.asOf };
+    }
+    if (bank.name === "BCE" && live.ecb) {
+      return { rate: `${live.ecb.rate.toFixed(2)}%`, isLive: true, isProxy: false, asOf: live.ecb.asOf };
+    }
+    if (bank.name === "BoE" && live.boe) {
+      return { rate: `${live.boe.rate.toFixed(2)}%`, isLive: true, isProxy: true, proxyLabel: live.boe.proxyLabel, asOf: live.boe.asOf };
+    }
+    if (bank.name === "BoJ" && live.boj) {
+      return { rate: `${live.boj.rate.toFixed(2)}%`, isLive: true, isProxy: true, proxyLabel: live.boj.proxyLabel, asOf: live.boj.asOf };
+    }
+  }
+  return { rate: bank.rate, isLive: false, isProxy: false };
+}
+
 function CentralBanksSection() {
   const [selected, setSelected] = useState("Fed");
   const cb = CENTRAL_BANKS.find(b => b.name === selected) ?? CENTRAL_BANKS[0];
+  const { data: liveRates, isLoading: ratesLoading } = useLivePolicyRates();
 
   const iso  = todayISO();
   const next = cb.meetings.find(m => m.date >= iso);  // first upcoming meeting
   const pastCount = cb.meetings.filter(m => m.date < iso).length;
+  const cbRate = liveRateFor(cb, liveRates);
 
   return (
     <div>
-      <SectionBar icon={<Activity size={12} />} title="CENTRAL BANKS — POLICY RATES & CALENDAR" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <SectionBar icon={<Activity size={12} />} title="CENTRAL BANKS — POLICY RATES & CALENDAR" />
+        <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "10px",
+          color: liveRates ? "var(--positive)" : ratesLoading ? "var(--text-faint)" : "var(--warning)" }}>
+          {liveRates ? "● LIVE · FRED" : ratesLoading ? "○ LOADING…" : "○ CACHED VALUES"}
+        </span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
         {/* Left: rate cards */}
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          {CENTRAL_BANKS.map(bank => (
-            <button key={bank.name} onClick={() => setSelected(bank.name)} style={{
-              ...s.card, display: "flex", alignItems: "center", gap: "10px",
-              cursor: "pointer", textAlign: "left", color: "var(--text)",
-              borderColor: selected === bank.name ? bank.color : "var(--border)",
-              background: selected === bank.name ? `${bank.color}22` : "var(--surface)",
-              transition: "all 0.15s",
-            }}>
-              <div style={{ width: "3px", height: "30px", background: bank.color, borderRadius: "2px", flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ fontSize: "11px", fontWeight: 700, color: bank.color }}>{bank.name}</span>
-                  <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{bank.rate}</span>
+          {CENTRAL_BANKS.map(bank => {
+            const r = liveRateFor(bank, liveRates);
+            return (
+              <button key={bank.name} onClick={() => setSelected(bank.name)} style={{
+                ...s.card, display: "flex", alignItems: "center", gap: "10px",
+                cursor: "pointer", textAlign: "left", color: "var(--text)",
+                borderColor: selected === bank.name ? bank.color : "var(--border)",
+                background: selected === bank.name ? `${bank.color}22` : "var(--surface)",
+                transition: "all 0.15s",
+              }}>
+                <div style={{ width: "3px", height: "30px", background: bank.color, borderRadius: "2px", flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: bank.color }}>{bank.name}</span>
+                    <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+                      {r.rate}{r.isLive && <span style={{ color: "var(--positive)" }}> ●</span>}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "9px", color: TREND_COLORS[bank.trend] }}>{TREND_ICONS[bank.trend]}</div>
                 </div>
-                <div style={{ fontSize: "9px", color: TREND_COLORS[bank.trend] }}>{TREND_ICONS[bank.trend]}</div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
 
         {/* Right: calendar detail */}
@@ -539,7 +588,7 @@ function CentralBanksSection() {
             <div style={{ fontSize: "12px", fontWeight: 700, color: cb.color, marginBottom: "6px" }}>{cb.fullName}</div>
             <div style={{ display: "flex", gap: "20px" }}>
               {[
-                { l: "RATE", v: cb.rate, big: true },
+                { l: "RATE", v: cbRate.rate, big: true },
                 { l: "INFLATION", v: cb.inflation },
                 { l: "GDP", v: cb.gdp },
               ].map(({ l, v, big }) => (
@@ -549,6 +598,11 @@ function CentralBanksSection() {
                 </div>
               ))}
             </div>
+            {cbRate.isLive && (
+              <div style={{ fontSize: "9px", color: "var(--text-faint)", marginTop: "4px" }}>
+                As of {cbRate.asOf}{cbRate.isProxy ? ` · live proxy via ${cbRate.proxyLabel} (not the officially announced rate)` : " · FRED"}
+              </div>
+            )}
           </div>
           <div>
             <div style={{ ...s.label, marginBottom: "5px" }}>NEXT MEETING</div>
@@ -597,32 +651,65 @@ function CentralBanksSection() {
 
 // ─── 4. YIELD CURVE ──────────────────────────────────────────────────────────
 
-// US Treasury par yields — 12 Jun 2026 (yield) vs 5 Jun 2026 (prev). Source: US Treasury.
-const YIELD_DATA = [
-  { maturity: "1M", yield: 3.69, prev: 3.71 },
-  { maturity: "3M", yield: 3.78, prev: 3.78 },
-  { maturity: "6M", yield: 3.82, prev: 3.81 },
-  { maturity: "1Y", yield: 3.86, prev: 3.88 },
-  { maturity: "2Y", yield: 4.09, prev: 4.17 },
-  { maturity: "5Y", yield: 4.21, prev: 4.29 },
-  { maturity: "7Y", yield: 4.34, prev: 4.41 },
-  { maturity: "10Y",yield: 4.48, prev: 4.55 },
-  { maturity: "20Y",yield: 4.98, prev: 5.03 },
-  { maturity: "30Y",yield: 4.97, prev: 5.01 },
+interface YieldPoint { maturity: string; yield: number; prev: number; asOf: string }
+
+// Real yields as of the last audit (12 Jun 2026) — shown only if the live
+// /api/yield-curve fetch fails and there's no cache yet.
+const YIELD_FALLBACK: YieldPoint[] = [
+  { maturity: "1M", yield: 3.69, prev: 3.71, asOf: "2026-06-12" },
+  { maturity: "3M", yield: 3.78, prev: 3.78, asOf: "2026-06-12" },
+  { maturity: "6M", yield: 3.82, prev: 3.81, asOf: "2026-06-12" },
+  { maturity: "1Y", yield: 3.86, prev: 3.88, asOf: "2026-06-12" },
+  { maturity: "2Y", yield: 4.09, prev: 4.17, asOf: "2026-06-12" },
+  { maturity: "5Y", yield: 4.21, prev: 4.29, asOf: "2026-06-12" },
+  { maturity: "7Y", yield: 4.34, prev: 4.41, asOf: "2026-06-12" },
+  { maturity: "10Y",yield: 4.48, prev: 4.55, asOf: "2026-06-12" },
+  { maturity: "20Y",yield: 4.98, prev: 5.03, asOf: "2026-06-12" },
+  { maturity: "30Y",yield: 4.97, prev: 5.01, asOf: "2026-06-12" },
 ];
 
+function useYieldCurve() {
+  const { data, isLoading } = useQuery<YieldPoint[]>({
+    queryKey: ["/api/yield-curve"],
+    staleTime: 30 * 60 * 1000, // server caches 6h — just limits client refetch churn
+    retry: 1,
+  });
+  return { data: data ?? YIELD_FALLBACK, live: !!data, loading: isLoading };
+}
+
 function YieldCurveSection() {
+  const { data: YIELD_DATA, live, loading } = useYieldCurve();
+  const find = (m: string) => YIELD_DATA.find(d => d.maturity === m);
+  const asOf = YIELD_DATA[0]?.asOf;
+
+  const spread = (a: string, b: string): { value: number; label: string } | null => {
+    const ya = find(a), yb = find(b);
+    if (!ya || !yb) return null;
+    return { value: ya.yield - yb.yield, label: `${a} − ${b}` };
+  };
+  const spreads = [
+    { s: spread("10Y", "2Y"), note: (v: number) => v > 0.5 ? "Normal" : v > 0 ? "Flat-ish" : "Inverted" },
+    { s: spread("30Y", "5Y"), note: (v: number) => v > 0.5 ? "Steep"  : v > 0 ? "Normal"   : "Inverted" },
+    { s: spread("10Y", "3M"), note: (v: number) => v > 0    ? "Positive" : "Inverted" },
+  ].filter(x => x.s !== null) as { s: { value: number; label: string }; note: (v: number) => string }[];
+
   return (
     <div>
-      <SectionBar icon={<TrendingUp size={12} />} title="YIELD CURVE — US TREASURIES" note="SNAPSHOT · 12 JUN" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <SectionBar icon={<TrendingUp size={12} />} title="YIELD CURVE — US TREASURIES" />
+        <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "10px",
+          color: live ? "var(--positive)" : loading ? "var(--text-faint)" : "var(--warning)" }}>
+          {live ? "● LIVE · FRED" : loading ? "○ LOADING…" : "○ CACHED"}
+        </span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
         <div style={s.card}>
-          <div style={{ ...s.label, marginBottom: "8px" }}>US YIELD CURVE (12 JUN 2026)</div>
+          <div style={{ ...s.label, marginBottom: "8px" }}>US YIELD CURVE {asOf ? `(as of ${asOf})` : ""}</div>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={YIELD_DATA} margin={{ top: 4, right: 12, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" />
               <XAxis dataKey="maturity" tick={{ fontSize: 9, fill: "var(--text-faint)" }} />
-              <YAxis domain={[3.5, 5.0]} tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickFormatter={v => `${v}%`} />
+              <YAxis domain={["auto", "auto"]} tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickFormatter={v => `${v}%`} />
               <Tooltip
                 contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", fontSize: "10px", borderRadius: "8px" }}
                 formatter={(v: any) => [`${v.toFixed(2)}%`]}
@@ -636,16 +723,14 @@ function YieldCurveSection() {
           <div style={s.card}>
             <div style={s.label}>KEY SPREADS</div>
             <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "5px" }}>
-              {[
-                { label: "10Y − 2Y", value: "+0.39%", color: "var(--positive)", note: "Normal"  },
-                { label: "30Y − 5Y", value: "+0.76%", color: "var(--positive)", note: "Steep"   },
-                { label: "10Y − 3M", value: "+0.70%", color: "var(--positive)", note: "Positive"},
-              ].map(sp => (
+              {spreads.map(({ s: sp, note }) => (
                 <div key={sp.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid var(--divider)" }}>
                   <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{sp.label}</span>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: sp.color, fontVariantNumeric: "tabular-nums" }}>{sp.value}</div>
-                    <div style={{ fontSize: "8px", color: sp.color }}>{sp.note}</div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: sp.value >= 0 ? "var(--positive)" : "var(--negative)", fontVariantNumeric: "tabular-nums" }}>
+                      {sp.value >= 0 ? "+" : ""}{sp.value.toFixed(2)}%
+                    </div>
+                    <div style={{ fontSize: "8px", color: sp.value >= 0 ? "var(--positive)" : "var(--negative)" }}>{note(sp.value)}</div>
                   </div>
                 </div>
               ))}
@@ -805,14 +890,49 @@ const PIZZA_EVENTS = [
   { date: "Mar 2026",    event: "Extended Middle East conflict",        spike: 74, ok: false },
 ];
 
-const FEAR_GREED_HISTORY = [
-  { d: "Jan 1",  v: 55 }, { d: "Jan 15", v: 62 }, { d: "Feb 1", v: 58 },
-  { d: "Feb 15", v: 48 }, { d: "Mar 1",  v: 35 }, { d: "Mar 10", v: 24 },
-  { d: "Mar 16", v: 22 },
+const PIZZA_VALUE  = 74;
+
+// ─── Live Fear & Greed (CNN, via server proxy) ─────────────────────────────
+interface FearGreedData {
+  score: number;
+  rating: string;
+  timestamp: string;
+  history: { date: string; value: number }[];
+  subIndicators: {
+    marketMomentum: { score: number; rating: string } | null;
+    safeHaven:      { score: number; rating: string } | null;
+    junkBondDemand: { score: number; rating: string } | null;
+    putCallOptions: { score: number; rating: string } | null;
+    stockPriceStrength: { score: number; rating: string } | null;
+    stockPriceBreadth:  { score: number; rating: string } | null;
+    volatilityVix:      { score: number; rating: string } | null;
+  };
+}
+
+const FG_FALLBACK_HISTORY = [
+  { d: "1", v: 55 }, { d: "2", v: 62 }, { d: "3", v: 58 },
+  { d: "4", v: 48 }, { d: "5", v: 35 }, { d: "6", v: 24 }, { d: "7", v: 22 },
 ];
 
-const PIZZA_VALUE  = 74;
-const FG_VALUE     = 22;
+function useFearGreed() {
+  const { data, isLoading } = useQuery<FearGreedData>({
+    queryKey: ["/api/fear-greed"],
+    staleTime: 15 * 60 * 1000, // server caches 30 min — just limits client refetch churn
+    retry: 1,
+  });
+  return { data, live: !!data, loading: isLoading };
+}
+
+function fgColor(rating: string | undefined): string {
+  switch (rating) {
+    case "extreme fear": return "var(--negative)";
+    case "fear":          return "#f97316";
+    case "neutral":       return "var(--warning)";
+    case "greed":         return "var(--positive)";
+    case "extreme greed": return "#22c55e";
+    default:               return "var(--text-muted)";
+  }
+}
 
 function PizzaMeter({ value }: { value: number }) {
   const color = value > 80 ? "var(--negative)" : value > 60 ? "#f97316" : value > 40 ? "var(--warning)" : "var(--positive)";
@@ -832,9 +952,9 @@ function PizzaMeter({ value }: { value: number }) {
   );
 }
 
-function FearGreedMeter({ value }: { value: number }) {
-  const color = value < 25 ? "var(--negative)" : value < 45 ? "#f97316" : value < 55 ? "var(--warning)" : value < 75 ? "var(--positive)" : "#22c55e";
-  const label = value < 25 ? "EXTREME FEAR" : value < 45 ? "FEAR" : value < 55 ? "NEUTRAL" : value < 75 ? "GREED" : "EXTREME GREED";
+function FearGreedMeter({ value, rating }: { value: number; rating?: string }) {
+  const color = fgColor(rating);
+  const label = (rating ?? "").toUpperCase() || "—";
   return (
     <div style={{ textAlign: "center", padding: "6px 0" }}>
       <div style={{ ...s.label, marginBottom: "4px" }}>CNN FEAR & GREED</div>
@@ -851,12 +971,26 @@ function FearGreedMeter({ value }: { value: number }) {
 }
 
 function PizzaAndFearSection() {
+  const { data: fg, live: fgLive, loading: fgLoading } = useFearGreed();
+  const fgHistory = fg?.history?.length
+    ? fg.history.map(h => ({ d: h.date.slice(5), v: h.value })) // "MM-DD"
+    : FG_FALLBACK_HISTORY;
+  const sub = fg?.subIndicators;
+  const subRows = [
+    { l: "Market Momentum",    d: sub?.marketMomentum     },
+    { l: "Safe Haven Demand",  d: sub?.safeHaven          },
+    { l: "HY Bond Demand",     d: sub?.junkBondDemand     },
+    { l: "Options (Put/Call)", d: sub?.putCallOptions     },
+    { l: "Stock Price Strength", d: sub?.stockPriceStrength },
+    { l: "VIX Volatility",     d: sub?.volatilityVix      },
+  ];
+
   return (
     <div>
-      <SectionBar icon={<Pizza size={12} />} title="ALTERNATIVE SENTIMENT — PENTAGON PIZZA + FEAR & GREED" note="STATIC · ILLUSTRATIVE" />
+      <SectionBar icon={<Pizza size={12} />} title="ALTERNATIVE SENTIMENT — PENTAGON PIZZA + FEAR & GREED" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
 
-        {/* Pentagon Pizza */}
+        {/* Pentagon Pizza — no reliable live source, kept illustrative */}
         <div style={s.card}>
           <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "10px", lineHeight: 1.7 }}>
             The <strong style={{ color: "var(--primary)" }}>Pentagon Pizza Index</strong> is an unofficial OSINT indicator: a sudden spike in pizza orders around the Pentagon and CIA has historically correlated with imminent military operations.
@@ -881,20 +1015,28 @@ function PizzaAndFearSection() {
                 ))}
               </tbody>
             </table>
-            <div style={{ fontSize: "8px", color: "var(--text-faint)", marginTop: "5px" }}>⚠ Unofficial anecdotal indicator · Source: X (@PentagonPizzaReport)</div>
+            <div style={{ fontSize: "8px", color: "var(--text-faint)", marginTop: "5px" }}>⚠ Unofficial anecdotal indicator, no live feed exists · Source: X (@PentagonPizzaReport) · STATIC</div>
           </div>
         </div>
 
-        {/* Fear & Greed */}
+        {/* Fear & Greed — live via CNN */}
         <div style={s.card}>
-          <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "10px", lineHeight: 1.7 }}>
-            The <strong style={{ color: "var(--primary)" }}>Fear & Greed Index</strong> by CNN measures the overall sentiment of US markets across 7 sub-indicators (momentum, VIX, junk bond demand, options, safe haven flows, breadth, strength).
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+            <div style={{ fontSize: "9px", color: "var(--text-muted)", lineHeight: 1.7, flex: 1 }}>
+              The <strong style={{ color: "var(--primary)" }}>Fear & Greed Index</strong> by CNN measures the overall sentiment of US markets across 7 sub-indicators (momentum, VIX, junk bond demand, options, safe haven flows, breadth, strength).
+            </div>
+            <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", whiteSpace: "nowrap", marginLeft: "6px",
+              color: fgLive ? "var(--positive)" : fgLoading ? "var(--text-faint)" : "var(--warning)" }}>
+              {fgLive ? "● LIVE" : fgLoading ? "○ …" : "○ CACHED"}
+            </span>
           </div>
-          <FearGreedMeter value={FG_VALUE} />
+          <FearGreedMeter value={fg?.score ?? 22} rating={fg?.rating} />
           <div style={{ marginTop: "12px" }}>
-            <div style={{ ...s.label, marginBottom: "6px" }}>2026 YTD EVOLUTION</div>
+            <div style={{ ...s.label, marginBottom: "6px" }}>
+              {fg?.history?.length ? "LAST 90 DAYS" : "ILLUSTRATIVE TREND"}
+            </div>
             <ResponsiveContainer width="100%" height={110}>
-              <AreaChart data={FEAR_GREED_HISTORY} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <AreaChart data={fgHistory} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="fgGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.35} />
@@ -902,7 +1044,7 @@ function PizzaAndFearSection() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" />
-                <XAxis dataKey="d" tick={{ fontSize: 8, fill: "var(--text-faint)" }} />
+                <XAxis dataKey="d" tick={{ fontSize: 8, fill: "var(--text-faint)" }} interval="preserveStartEnd" />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 8, fill: "var(--text-faint)" }} ticks={[0,25,50,75,100]} />
                 <Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", fontSize: "10px", borderRadius: "8px" }} />
                 <ReferenceLine y={25} stroke="var(--negative)" strokeDasharray="3 3" label={{ value: "Extreme Fear", fill: "var(--negative)", fontSize: 8 }} />
@@ -911,15 +1053,12 @@ function PizzaAndFearSection() {
               </AreaChart>
             </ResponsiveContainer>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", marginTop: "8px" }}>
-              {[
-                { l: "Market Momentum",   v: "Bearish",  c: "var(--negative)" },
-                { l: "Safe Haven",        v: "↑ High",   c: "var(--negative)" },
-                { l: "HY Bond Demand",    v: "Low",      c: "var(--warning)"  },
-                { l: "Options (Put/Call)",v: "Bearish",  c: "var(--negative)" },
-              ].map(({ l, v, c }) => (
+              {subRows.map(({ l, d }) => (
                 <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", padding: "2px 0", borderBottom: "1px solid var(--divider)" }}>
                   <span style={{ color: "var(--text-faint)" }}>{l}</span>
-                  <span style={{ color: c, fontWeight: 600 }}>{v}</span>
+                  <span style={{ color: fgColor(d?.rating), fontWeight: 600 }}>
+                    {d ? d.rating.charAt(0).toUpperCase() + d.rating.slice(1) : "—"}
+                  </span>
                 </div>
               ))}
             </div>

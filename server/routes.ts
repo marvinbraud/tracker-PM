@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertHoldingSchema, type InsertHolding, type Position, type PortfolioSummary, type RiskMetrics } from "@shared/schema";
 import { getMockPrice, generateHistory, getExchangeRate, getExchangeRateAsync, fetchLiveMacroData, fetchBigMacIndex } from "./marketData";
 import { normalizeGbx } from "@shared/currency";
+import { fetchPolicyRates, fetchYieldCurve, fetchFearGreedIndex } from "./fred";
 import {
   dailyReturnsFromValues,
   annualizedReturn, annualizedVolatility, sharpeRatio, sortinoRatio,
@@ -248,6 +249,45 @@ export function registerRoutes(httpServer: Server, app: Express) {
         return res.json({ ...macroMktCache.data, fetchedAt: macroMktCache.fetchedAt });
       }
       return res.status(500).json({});
+    }
+  });
+
+  /** GET /api/policy-rates — live central bank rates (FRED), cached 7 days */
+  app.get("/api/policy-rates", async (_req, res) => {
+    try {
+      const data = await fetchPolicyRates();
+      if (!data) return res.status(503).json({ error: "FRED unavailable" });
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+      return res.json(data);
+    } catch (err) {
+      console.error("[policy-rates]", err);
+      return res.status(500).json({ error: "Failed to fetch policy rates" });
+    }
+  });
+
+  /** GET /api/yield-curve — live US Treasury yield curve (FRED), cached 6h */
+  app.get("/api/yield-curve", async (_req, res) => {
+    try {
+      const data = await fetchYieldCurve();
+      if (!data) return res.status(503).json({ error: "FRED unavailable" });
+      res.setHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=21600");
+      return res.json(data);
+    } catch (err) {
+      console.error("[yield-curve]", err);
+      return res.status(500).json({ error: "Failed to fetch yield curve" });
+    }
+  });
+
+  /** GET /api/fear-greed — live CNN Fear & Greed Index, cached 30 min */
+  app.get("/api/fear-greed", async (_req, res) => {
+    try {
+      const data = await fetchFearGreedIndex();
+      if (!data) return res.status(503).json({ error: "Fear & Greed source unavailable" });
+      res.setHeader("Cache-Control", "public, max-age=900, stale-while-revalidate=1800");
+      return res.json(data);
+    } catch (err) {
+      console.error("[fear-greed]", err);
+      return res.status(500).json({ error: "Failed to fetch Fear & Greed index" });
     }
   });
 
