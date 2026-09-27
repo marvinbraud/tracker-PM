@@ -647,7 +647,12 @@ export default function GoalsPage({ portfolio }: Props) {
             No holdings found — import positions first.
           </div>
         ) : (
-          <div style={{ overflowX: "auto", maxHeight: "640px", overflowY: "auto" }}>
+          // No internal maxHeight/overflowY here on purpose: nesting a second
+          // scroll region inside the page's own scroll caused rows to get
+          // cut off mid-row wherever the fixed pixel cap landed. Letting all
+          // rows flow naturally means the page's single scrollbar handles
+          // it, with the sticky header staying visible throughout.
+          <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
@@ -778,7 +783,9 @@ export default function GoalsPage({ portfolio }: Props) {
             No dividends logged yet.
           </div>
         ) : (
-          <div style={{ overflowX: "auto", maxHeight: "300px", overflowY: "auto" }}>
+          // Same reasoning as the holdings table above: no internal scroll
+          // region, so rows never get cut off mid-row by a fixed pixel cap.
+          <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead style={{ position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
