@@ -647,12 +647,11 @@ export default function GoalsPage({ portfolio }: Props) {
             No holdings found — import positions first.
           </div>
         ) : (
-          // No internal maxHeight/overflowY here on purpose: nesting a second
-          // scroll region inside the page's own scroll caused rows to get
-          // cut off mid-row wherever the fixed pixel cap landed. Letting all
-          // rows flow naturally means the page's single scrollbar handles
-          // it, with the sticky header staying visible throughout.
-          <div style={{ overflowX: "auto" }}>
+          // Capped to exactly HOLDINGS_VISIBLE_ROWS full rows (computed from
+          // the table's own fixed line-height above) so the internal scroll
+          // boundary never lands mid-row, while still keeping the Received
+          // Dividends Log section below reachable without excessive scrolling.
+          <div style={{ overflowX: "auto", maxHeight: `${holdingsTableMaxHeight}px`, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
@@ -862,15 +861,23 @@ const iconBtnStyle: React.CSSProperties = {
   color: "var(--text-muted)", padding: "3px", display: "inline-flex",
   alignItems: "center", borderRadius: "4px",
 };
+// lineHeight is set explicitly (not left to the browser default) so the
+// holdings table's scroll cap below can be computed as an exact multiple of
+// row height — no more guessing a pixel value and landing mid-row.
 const thStyle: React.CSSProperties = {
-  padding: "7px 12px", textAlign: "left", fontSize: "10px",
+  padding: "7px 12px", textAlign: "left", fontSize: "10px", lineHeight: "14px",
   color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".05em",
   fontWeight: 600, whiteSpace: "nowrap",
   position: "sticky", top: 0, background: "var(--surface)", zIndex: 1,
 };
 const tdStyle: React.CSSProperties = {
-  padding: "8px 12px", color: "var(--text)", verticalAlign: "middle",
+  padding: "8px 12px", lineHeight: "16px", color: "var(--text)", verticalAlign: "middle",
 };
+// Header: 7+14+7+1(border) = 29px. Row: 8+16+8+1(border) = 33px.
+const HOLDINGS_ROW_H    = 33;
+const HOLDINGS_HEADER_H = 29;
+const HOLDINGS_VISIBLE_ROWS = 10;
+const holdingsTableMaxHeight = HOLDINGS_HEADER_H + HOLDINGS_VISIBLE_ROWS * HOLDINGS_ROW_H;
 const statLabelStyle: React.CSSProperties = {
   fontSize: "9px", color: "var(--text-faint)", textTransform: "uppercase",
   letterSpacing: ".05em", marginBottom: "2px",
